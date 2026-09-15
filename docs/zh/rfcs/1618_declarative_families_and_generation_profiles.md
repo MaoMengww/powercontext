@@ -1,6 +1,6 @@
 - 提案名称：`declarative_artifact_families_and_generation_profiles`
 - 开始日期：2026-09-14
-- RFC PR：[oceanbase/powercontext#0000](https://github.com/oceanbase/powercontext/pull/0000)
+- RFC PR：[oceanbase/powercontext#1618](https://github.com/oceanbase/powercontext/pull/1618)
 
 # Summary
 
