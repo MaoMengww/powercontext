@@ -32,18 +32,7 @@ An organization may want to change how a proposal is generated, or to produce a 
 
 **Generation Provenance.** Every Candidate and Revision produced by a profile records "which revision of which profile generated it", plus structured provenance (prompt reference, effective bounds, target schema version) and its derived digest for equality comparison. Provenance is not factual evidence, so it is stored separately from the evidence tuple.
 
-## Example 1: change how content is generated, not the type
-
-An administrator considers Experience distillation too diffuse, and wants a different model and tighter output:
-
-1. The deployment has declared two catalog entries, `small-reasoner` and `strong-reasoner`, with their bounds.
-2. A Scope administrator writes revision 1 with `family=generation-profile` and `artifact_id=experience.generate`, specifying `target_family="experience"`, `prompt.ref="experience.generate"`, `model="small-reasoner"`, bounded settings, and `output_max_bytes`.
-3. Every Experience Candidate produced afterwards records that exact profile revision and its structured provenance; existing Revisions are unaffected.
-4. To roll back, read the old revision's content and write it as a new, monotonically increasing revision.
-
-The observed difference: lineage for candidates and committed Revisions gains one exact generation-provenance reference; evidence, schema, Review, and authorization paths are unchanged. Switching the prompt to another key, the model to another catalog entry, or any bounded setting produces a new profile revision, so "what changed" is visible in lineage.
-
-## Example 2: add a domain family
+## Example 1: add a domain family
 
 An administrator installs an extension package and enables `runbook` in the server configuration. The manifest declares: `review_policy = "review"`; `cardinality = "collection"`; lineage requiring replacement candidates to carry an exact target and non-empty Source evidence; a content schema `acme.runbook.v1` constraining `{schema, title, summary, symptoms[], steps[], failure_handling[]}`, where `schema` is a `required + const` version marker; and the default behavior for retrieval projection and context contribution.
 
@@ -54,6 +43,17 @@ After an incident closes:
 3. At this point it is neither searchable nor injectable. Pending and rejected Candidates are fully isolated from Artifact search and PreparedContext.
 4. A human Review approves it, committing an immutable Runbook Revision in the same database transaction, updating the retrieval projection, and marking the Candidate approved; if any step fails, everything rolls back.
 5. Because the manifest declares projection, the Runbook enters retrieval; because it declares context contribution and the deployment has allowed that family, it may enter context as bounded, precisely cited, untrusted-history content, and it cannot inject raw system or developer instructions.
+
+## Example 2: change how content is generated, not the type
+
+An administrator has already loaded a `runbook` extension family (installation and manifest shape in Example 1), considers the auto-generated runbook steps too diffuse, and wants a different model and tighter output:
+
+1. The deployment has declared two catalog entries, `small-reasoner` and `strong-reasoner`, with their bounds.
+2. A Scope administrator writes revision 1 with `family=generation-profile` and `artifact_id=runbook.generate`, specifying `target_family="runbook"`, `prompt.ref="runbook.generate"` (the template id declared in the extension manifest), `model="small-reasoner"`, bounded settings, and `output_max_bytes`.
+3. Every Runbook Candidate produced afterwards records that exact profile revision and its structured provenance; existing Revisions are unaffected.
+4. To roll back, read the old revision's content and write it as a new, monotonically increasing revision.
+
+The observed difference: lineage for candidates and committed Revisions gains one exact generation-provenance reference; evidence, schema, Review, and authorization paths are unchanged. Switching the prompt to another template id, the model to another catalog entry, or any bounded setting produces a new profile revision, so "what changed" is visible in lineage. Several profiles can also coexist for the same `target_family`, resolved by profile key: for example `runbook.fast` (small model, low latency) and `runbook.slow` (strong model, high quality), where naming a key at generation time yields a different model and budget.
 
 ## Author workflow
 
@@ -103,7 +103,7 @@ Failures fall into two classes that must not be conflated:
 
 - Scope-level custom instructions for Prompts stay as they are and remain the only entry point for built-in family guidance. Generation profiles do not replace them and can only reference them.
 - The `family=profile` user-profile family keeps its per-scope `activation_mode` and does not migrate to the generic Review policy.
-- No built-in family is migrated: they keep using the existing typed generation endpoints, and `generation_profile` is always empty for built-in candidates.
+- No built-in family is migrated: they keep using the existing typed generation endpoints. Integrating built-in families with generation profiles is not part of S1 in this RFC (see Future possibilities); until that work lands, `generation_profile` is always empty for built-in candidates.
 - Generation-origin information in existing Handoff content keeps working; moving it into the generic provenance slot is follow-up work, not a prerequisite for this slice.
 
 # Reference-level explanation
@@ -156,7 +156,7 @@ The manifest schema's size and nesting depth, the family and template limits, an
 
 ```text
 read manifest + closed validation → compatibility matrix (platform version range) → per-version check_schema + pre-resolve every $ref + verify the version marker is `required + const` and equals its own version key
-→ structural lint (per-level `additionalProperties: false`, non-empty `required`, no dead `$defs`) + projection/render dry run on a skeleton payload
+→ structural lint (per-level `additionalProperties: false`, non-empty `required`, no dead `$defs`) + projection/render dry run on a skeleton payload (including the element-by-element rendering path over non-empty arrays)
 → de-duplicate family and `prompt_templates[].id`, verify target_family is declared
 → construct thin wrapper types and register → persist the family description → hand to runtime / repository / authorization
 ```
@@ -206,9 +206,9 @@ Non-backward-compatible changes therefore do not break historical interpretabili
 
 A declarative family cannot carry projection or rendering functions, so the platform decides both with **one fixed rule**, introducing no configurable dialect:
 
-- **Projection**: take every string field in the content, exclude the version marker `schema`, and concatenate them in a stable order into searchable text. This rule happens to reproduce the sample family's expected projection and adds no configuration.
-- **Rendering**: render scalar fields one per line as `Label: value`, with the section title taken from `prepared_context.display_name`.
-- **Bounds unchanged**: projection returns text only, and analysis, index writes, and the `lifecycle_state='active'` filter all stay in the platform; contribution entries carry exact `ArtifactRef` citations and a per-entry byte cap, while the trust envelope, citation format, and truncation are still generated by Runtime.
+- **Projection**: traverse the content tree depth-first, take every string value, exclude the version marker `schema`, and concatenate them in a stable order consistent with payload normalization into searchable text; a newline boundary is inserted between array entries so a phrase query never matches across two array elements. This rule happens to reproduce the sample family's expected projection and adds no configuration.
+- **Rendering**: recurse along the same traversal — scalar fields as `Label: value` (the label comes from the schema's `title` annotation, falling back to the field name), arrays element by element as `Label[1]:`, `Label[2]:`, and nested objects expanded under path labels; the section title is taken from `prepared_context.display_name`.
+- **Bounds unchanged**: projection returns text only, and analysis, index writes, and the `lifecycle_state='active'` filter all stay in the platform; contribution entries carry exact `ArtifactRef` citations and a per-entry byte cap, and when the budget is exceeded whole array elements are dropped with a visible truncation marker — never a character cut inside an element — while the recursion depth and element-count caps go into `limits.py`; the trust envelope, citation format, and truncation are still generated by Runtime.
 
 **Rebuild the family's projection on activation and upgrade**: after a schema or projection declaration changes, the indexes of existing heads must be made consistent with the new declaration again, otherwise retrieval results drift silently. The rebuild reuses the same entry point and runs once after the family finishes activating.
 
@@ -218,9 +218,11 @@ Tags are a built-in feature, `pc_artifact_tags` has a family CHECK constraint, e
 
 ### Storage and identity
 
-A generation profile is the built-in configuration Artifact family `generation-profile`: stored as immutable Artifact Revisions, where `artifact_id` is the profile key (for example `experience.generate`, `runbook.generate`) and the version dimension is `revision`. Writes go through the generic Artifact create/replace paths and are performed by a Scope administrator; rollback reads an old revision and writes it as a new, monotonically increasing revision.
+A generation profile is the built-in configuration Artifact family `generation-profile`: stored as immutable Artifact Revisions, where `artifact_id` is the profile key (for example `runbook.generate`) and the version dimension is `revision`. Writes go through the generic Artifact create/replace paths and are performed by a Scope administrator; rollback reads an old revision and writes it as a new, monotonically increasing revision.
 
 Because the profile is itself an Artifact in the same Scope, it can feed the composite foreign key into `pc_artifacts` directly.
+
+**A revision is the version of an owner-writable state, not a reproducible generation identity.** `(artifact_id, revision)` identifies only the immutable snapshot of references the administrator wrote; the configuration actually in effect is decided at resolution time by that revision, the catalog entry content, the extension package identity, and `target_schema_version`, and is identified by the resolution identity `digest`. Therefore: changing the profile bytes yields a new revision; changing catalog entry content leaves the revision unchanged while `digest` necessarily changes.
 
 ### Content model
 
@@ -239,7 +241,7 @@ GenerationProfileContent
   evidence_policy     object        may only narrow the evidence set, never widen it (by Source kind and Artifact family)
 ```
 
-**The prompt reference has exactly one namespace, determined by the target family.** When `target_family` is a built-in family, `prompt.ref` must point at a prompt key; when it is an extension family, it must point at a `prompt_templates[].id` from an extension manifest loaded in this deployment. Both are versioned (the former by definition/builtin version, the latter by package content addressing), and generation provenance covers the resolved template text or the compiled instructions.
+**The prompt reference has exactly one namespace, determined by the target family.** When `target_family` is a built-in family, `prompt.ref` must point at a prompt key; when it is an extension family, it must point at a `prompt_templates[].id` from an extension manifest loaded in this deployment. Both are versioned (the former by definition/builtin version, the latter by package content addressing), and generation provenance records **a digest of the resolved template text**, `template_digest`.
 
 **The output contract does not belong to the profile.** The family holds the manifest schema; a profile can only reference it and tighten `output_max_bytes`.
 
@@ -251,7 +253,7 @@ GenerationProfileContent
 
 At generation time, Runtime resolves one exact profile revision for the operation and freezes it for the whole operation, including model retries. Resolution is **keyed by profile key** and never reverse-looked-up by target family — one family may have several profiles, so resolving by family is ambiguous; the family identity is derived from the resolved `target_family` instead. The mechanism follows the existing Prompt approach: a ContextVar holds the resolution result, `current_generation_profile(profile_key)` reads only the selection bound to that operation and never a mutable global head, and concurrent Scopes do not interfere. There are only two levels of precedence: a Scope profile → no profile (falling back to built-in Auto and deployment settings). A caller cannot decide profile content through a request: a caller may only name one profile key, while the profile body is written by an administrator and subject to authorization and budget validation.
 
-Generation provenance is **structured fields plus a derived digest**: `prompt_ref` (the resolved prompt key or template id), `effective_limits` (the values actually in effect after taking the min of each profile declaration and the catalog entry bound), `target_schema_version`, and `digest`, whose input contract is frozen by `digest_input_version`. The structure is for auditing and reading in `diff`, directly answering "what is the effective configuration".
+Generation provenance is **structured fields plus a derived digest**: `prompt_ref` (the resolved prompt key or template id) and the template text digest `template_digest`, the model identity quadruple `catalog_entry` (catalog entry name) / `provider` / `model` (model id) / `base_url`, the effective bounds `effective_limits {model_settings, timeout_seconds, max_requests, output_max_bytes}` (the values actually in effect after taking the min of each profile declaration and the catalog entry bound), the extension package identity `{extension_id, version, lock_digest}`, `target_schema_version`, and `digest`, whose input contract is frozen by `digest_input_version`. The structure is for auditing and reading in `diff`.
 
 ### Authorization
 
@@ -285,11 +287,11 @@ The catalog is server configuration declared by the deployment, shaped as `name 
 
 ## Generation provenance
 
-`ArtifactLineage` gains a pair of nullable non-evidence fields, `generation_source: ArtifactRef | null` and `generation_provenance: GenerationProvenance | null`, following the existing all-or-nothing validation. `GenerationProvenance` is **structured fields plus a derived digest**: `prompt_ref`, `effective_limits`, `target_schema_version`, `digest`, `digest_input_version`.
+`ArtifactLineage` gains a pair of nullable non-evidence fields, `generation_source: ArtifactRef | null` and `generation_provenance: GenerationProvenance | null`, following the existing all-or-nothing validation. `GenerationProvenance` is **structured fields plus a derived digest**, and the structured fields record a complete snapshot taken at resolution time rather than mutable references: `prompt_ref`, the template text digest `template_digest`, the extension package identity `{extension_id, version, lock_digest}`, the model identity quadruple `catalog_entry` (catalog entry name) / `provider` / `model` (model id) / `base_url`, the effective bounds `effective_limits {model_settings, timeout_seconds, max_requests, output_max_bytes}`, `target_schema_version`, `digest`, and `digest_input_version`. Recording only an entry name or key would lose identity once the catalog or package changes, and lineage must still answer "what was actually used": catalog entry content keeps no historical versions, so this snapshot carries its forensics, while the extension template text is stored per `(family, schema_version)` in `pc_extension_families` and is append-only, so it remains recoverable from that anchor after an upgrade or uninstall.
 
-The digest serves equality, de-duplication, idempotency keys, and cross-deployment comparison — a 64-character hex string that can be indexed and leaks no content; the structure serves auditing and `diff`, letting operations and reviewers read directly "which prompt, what limits, which target schema version", where a hash can only answer "same or not". The shape is not new: `HandoffGenerationOrigin` in `builtin/artifacts/handoff/generation_metadata.py:44-58` is already "structured fields + `compiled_digest` + `original_draft_digest`".
+The digest serves equality, de-duplication, and cross-deployment comparison — a 64-character hex string that can be indexed and leaks no content; the structure serves auditing and `diff`, letting operations and reviewers read directly "which prompt, what limits, which target schema version", where a hash can only answer "same or not". The shape is not new: `HandoffGenerationOrigin` in `builtin/artifacts/handoff/generation_metadata.py:44-58` is already "structured fields + `compiled_digest` + `original_draft_digest`".
 
-The digest's input contract must be frozen explicitly: `digest` is a `sha256` over `rfc8785`-canonicalized **fixed field subset**, identified by `digest_input_version`; newly added optional fields by default do **not** enter the digest input, avoiding the false difference where "adding one field makes every historical and new record compare unequal". Coverage includes **the content of the model catalog entry** (provider / base_url / bounds), not just the entry name — otherwise a deployment changing the catalog would be invisible in lineage. Whether content was edited by a human is a separate matter, carried by a different digest and never mixed with the configuration digest.
+The digest's input contract must be frozen explicitly: `digest` is a `sha256` over `rfc8785`-canonicalized **fixed field subset**, identified by `digest_input_version`; its first version already includes the model identity quadruple, the effective bounds `effective_limits`, the template text digest, the package identity, and `target_schema_version`, so a catalog entry content change changes the digest and not only the entry name; newly added optional fields by default do **not** enter the digest input, avoiding the false difference where "adding one field makes every historical and new record compare unequal". Coverage includes **the content of the model catalog entry** (provider / base_url / bounds), not just the entry name — otherwise a deployment changing the catalog would be invisible in lineage. Whether content was edited by a human is a separate matter, carried by a different digest and never mixed with the configuration digest.
 
 Persistence follows the existing shape: `pc_artifacts` has no provenance columns, so generation provenance likewise lives in a separate table, written by `ArtifactRepository` when a revision is written and backfilled when lineage is read. On the candidate side, `pc_artifact_candidate_versions` gains four columns — `generation_profile_family` / `generation_profile_artifact_id` / `generation_profile_revision` / `generation_provenance` — plus a **derived** `generation_digest` column, all five living and dying together, with a composite foreign key into `pc_artifacts` (the profile and the artifact share a Scope, so the foreign key holds).
 
@@ -299,7 +301,7 @@ Persistence follows the existing shape: `pc_artifacts` has no provenance columns
 
 Family dispatch becomes registry-driven.
 
-Approval still completes inside a single database transaction: validate the proposal under the candidate's recorded `schema_version`, enforce declarative lineage, write the Artifact, update derived indexes, and `mark_approved` — five steps in one transaction, rolling back entirely if any step fails. With `cardinality = "singleton"`, a candidate that does not explicitly give a target implicitly points at the current head and performs a CAS; `collection` keeps explicit semantics.
+Approval still completes inside a single database transaction: validate the proposal under the candidate's recorded `schema_version`, enforce declarative lineage, write the Artifact, update derived indexes, and `mark_approved` — five steps in one transaction, rolling back entirely if any step fails. With `cardinality = "singleton"`, the singleton target is frozen **when the candidate is created**: an explicitly given target is recorded as is, and an omitted one resolves the current head at that moment and records it into the candidate's `target_*` columns (a first creation with no head records the expected absence); approval then CASes only against the recorded value and never re-resolves the latest at approval time, eliminating head drift between creation and approval. `collection` keeps explicit semantics.
 
 Owner semantics are required for extension families: new families are automatically covered by `logical_artifacts()`, and a missing owner relation makes the whole Scope's context unavailable.
 
@@ -308,7 +310,7 @@ Owner semantics are required for extension families: new families are automatica
 | Table | Nature | Change |
 | --- | --- | --- |
 | `pc_artifact_generation_provenance` | **new** | Records Artifact Revision generation provenance by `(scope_id, family, artifact_id, revision)`: the profile reference and the structured generation provenance. Shaped like the existing `pc_artifact_publications`, with a composite foreign key into `pc_artifacts` on the reference columns. |
-| `pc_extension_families` | **new** | Family description: primary key `(family, schema_version)`, storing that version's JSON Schema text, the source extension identifier, and the activation time; append-only, referenced by the artifact and candidate tables through `RESTRICT` composite foreign keys. It is what allows historical Revisions to be validated and rendered after deactivation, and it is `diff`'s authoritative input. |
+| `pc_extension_families` | **new** | Family description: primary key `(family, schema_version)`, storing that version's JSON Schema text, the source extension identifier, and the activation time, and recording the `prompt_templates[].id` and template text declared by that version's manifest; append-only, referenced by the artifact and candidate tables through `RESTRICT` composite foreign keys. It is what allows historical Revisions to be validated and rendered after deactivation, and it is what resolves generation provenance's template anchor, as well as `diff`'s authoritative input. |
 | `pc_artifact_candidate_versions` | modified | Adds a `schema_version` column (derived from the content marker, non-null, with a composite foreign key into `pc_extension_families`), four generation-provenance columns plus a derived `generation_digest`, a five-column all-or-nothing CHECK, and a composite foreign key into `pc_artifacts`. Existing `target_*` columns are unchanged. |
 | `pc_artifacts` | modified | Adds a `schema_version` column: `NULL` for built-in families, non-null for declarative families (built-in set ⇔ `NULL`), with a `RESTRICT` composite foreign key into `pc_extension_families(family, schema_version)`. All other columns are unchanged. |
 | `pc_artifact_heads` | unchanged | `family` is already a free string with no CHECK; `searchable_text` is already a generic column, and extension families reuse the same active-head filter. |
@@ -399,15 +401,20 @@ The `powercontext config` wizard gains an extensions step that reuses the existi
 
 ## Implementation and acceptance
 
+Implementation proceeds in two slices, and the acceptance items below are a global bar that is not reordered per slice:
+
+- **S1**: one Runbook extension family plus one generation profile, covering exact evidence → Candidate → human Review → retrieval and context contribution → exact reads after deactivation; including the generic generation endpoint, `pc_extension_families` and `schema_version` persistence, and generation provenance. Corresponds to acceptance items 1, 2a–2d, 3–16, 17, 19–22, 25–27.
+- **S2**: `extension lock/diff`, `enable` / `print-config` maturity, the config wizard's extensions step, and the four-state refinement of the discovery endpoint. Corresponds to acceptance items 18, 23, 24.
+
 Acceptance covers external behavior:
 
 1. A sample extension (shipped with the implementation, not as an attachment to this RFC) derives a typed Candidate from exact evidence, gets approved through human Review, and commits an immutable Revision; evidence and provenance are exactly readable from lineage.
-2. Changing the prompt, model, settings, schema, or extension package version produces a new exact profile revision that is visible in lineage.
+2. Generation-identity changes are observable: **2a** profile content changes ⇒ a new exact profile revision; **2b** a family schema change ⇒ a new exact `schema_version`; **2c** replacing template text under the same `prompt_templates[].id` ⇒ a new extension package version identity; **2d** catalog entry content changes ⇒ no new version, but `digest` necessarily changes. They are visible in lineage as `generation_profile_revision`, `target_schema_version`, `extension_package` and `template_digest`, and `digest` respectively; 2d additionally requires the structured snapshot to answer which model and endpoint were used after an entry is renamed, a model swapped, or an entry removed.
 3. An invalid manifest (unknown fields, illegal schema, duplicate family, naming conflict, undeclared `target_family`) is rejected at activation and appears only in readiness and the discovery endpoint; other families and generation paths are unaffected. Runtime failures stop before a Candidate is persisted.
 4. The generator cannot allocate the final Artifact identity, approve its own Candidate, publish content, or authorize itself; the relevant APIs do not exist.
 5. Artifact IDs are allocated by the platform with a family-derived prefix and a CAS, independently of content; authors do not declare a prefix and there is no prefix-conflict failure class.
 6. Empty results are decided by `noop_field`: no candidate is written, an explicit `no_op` is returned, the diagnostic is content-free, and the path is distinguishable from `failure`.
-7. `cardinality` takes effect: `singleton` evolves the same logical artifact when a candidate gives no target and performs a head CAS; `collection` keeps explicit semantics.
+7. `cardinality` takes effect: `singleton` evolves the same logical artifact when a candidate gives no target and performs a head CAS; `collection` keeps explicit semantics. The singleton target is frozen when the candidate is created: if the head advances concurrently between candidate creation and approval, approval CASes against the candidate's recorded target and returns a version conflict rather than silently attaching the content to the new head. A first creation compares against the expected absence and conflicts if the head has been created concurrently.
 8. The full expressive power of declarative schemas takes effect: `allOf`/`if`/`then`, nested `minLength`/`maxItems`, `const`, `additionalProperties: false`, and cross-family payload rejection are all enforced on the activation and approval paths.
 9. Payload normalization takes effect: payloads with the same semantics but different key order produce identical stored bytes.
 10. An extension family without a declared projection is not searchable; a contributor that is undeclared or not allowed is not injected; requesting assembly for that family directly returns 422.
@@ -425,6 +432,9 @@ Acceptance covers external behavior:
 22. **Version landing**: the content marker and the `schema_version` column always agree (the column is derived from the content, and a mismatch is a typed error); an unregistered version cannot be written; reclaiming a still-referenced description is refused by `RESTRICT`; after deactivation and downgrade, content can still be validated and rendered under its recorded version.
 23. **Explicable default-deny**: `GET /v1/extensions` gives the four states and "what is missing next"; retrieval and injection failures distinguish "family does not exist / projection not declared / not allowed"; an MCP read-only client can list extension families and available profile keys.
 24. **Administrator closed loop**: going from an empty configuration to "the family can generate" requires no handwritten JSON — `extension enable` / `print-config` produce configuration fragments, the `generation-profile` subcommand writes the profile and echoes the revision and structured provenance, and the config wizard covers the same step.
+25. A Runbook's `steps[]` appear in PreparedContext in original order as `Steps[1]:`…, and `symptoms[]` / `failure_handling[]` are equally reachable; over budget, whole elements are dropped with a visible truncation marker.
+26. Projection covers nested strings: words inside `steps` are hit by retrieval; a phrase query does not falsely match across two array elements; the `schema` version marker does not enter projection.
+27. Payloads with the same semantics but different key order produce identical `searchable_text` bytes (following the same order as payload normalization).
 
 # Drawbacks
 
@@ -445,6 +455,7 @@ Acceptance covers external behavior:
 - Treating every new result as Memory: conflates persistent facts and decisions with domain-specific deliverables.
 - Letting custom output enter PreparedContext automatically: bypasses selection, citation, budget, trust, and authorization.
 - Profiles carrying their own `base_url`: would let a Scope administrator target any egress destination, with no place to mount egress policy.
+- Letting a profile revision follow catalog entry content or extension package identity changes: catalog entries are written by the deployment and package versions by the extension author, while a profile write needs only `SCOPE_ADMIN`; following would mean requiring the catalog to be append-only and moving control over model reachability from the deployment to each Scope — operational burden, not reproducibility.
 - A separate `/v1/extensions/...` operation surface for extension families: splits one resource into two API surfaces and conflicts with the single repository route.
 - A management direct-write path for extension families: would require opening up the `CreateArtifactRequest` discriminated union and would introduce "extension-preseeded content" into the trust surface. S1 keeps approval as the only producer.
 
@@ -470,6 +481,7 @@ Acceptance covers external behavior:
 # Future possibilities
 
 - Automatic triggering: attach to the existing source-window rounds, reusing evidence filtering and the "all filtered out" diagnostic.
+- Integrating built-in families with generation profiles: letting built-in families such as Experience and Skill also be generated under a profile.
 - A declarative field list for projection and rendering, strengthening declarative expressiveness.
 - Code hooks as an escape hatch: capability-bounded extension points for families that need custom projection, rendering, and lineage, while declarative stays the default.
 - Extensions providing vector projections or custom ranking, fused with the existing FTS.

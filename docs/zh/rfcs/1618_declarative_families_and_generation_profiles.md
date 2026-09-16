@@ -32,18 +32,7 @@
 
 **生成溯源（Generation Provenance）。** 每个由档案产生的 Candidate 与 Revision 都记录“由哪个档案的哪个 revision 生成”，以及一份结构化溯源（prompt 引用、生效边界、目标 schema 版本）与其派生摘要（供判等与比对）。溯源不是事实证据，因此它与证据元组分开存放。
 
-## 例一：只改生成方式，不改类型
-
-管理员认为 Experience 的归纳过于发散，想更换模型并收紧输出：
-
-1. 部署方已在目录中声明 `small-reasoner` 与 `strong-reasoner` 两个条目，并给出上界。
-2. Scope 管理员以 `family=generation-profile`、`artifact_id=experience.generate` 写入 revision 1，内容指定 `target_family="experience"`、`prompt.ref="experience.generate"`、`model="small-reasoner"`、有界设置与 `output_max_bytes`。
-3. 之后产生的每个 Experience Candidate 都记录该档案的确切 revision 与结构化溯源；既有 Revision 不受影响。
-4. 要回滚，读取旧 revision 的 content，再写成一个新的、单调递增的 revision。
-
-观察到的差异：候选与正式 Revision 的 lineage 里多出一条精确的生成溯源引用；证据、schema、Review 与授权路径不变。把 prompt 换成另一个 key、把模型换成另一个目录条目、或改动任一有界设置，都会产生新的档案 revision，因此“变了什么”在 lineage 里可见。
-
-## 例二：新增一个领域家族
+## 例一：新增一个领域家族
 
 管理员安装一个扩展包并在服务端配置中启用 `runbook`。清单声明：`review_policy = "review"`；`cardinality = "collection"`；lineage 要求替换型候选带精确 target 与非空 Source 证据；内容 schema `acme.runbook.v1` 约束 `{schema, title, summary, symptoms[], steps[], failure_handling[]}`，其中 `schema` 为 `required + const` 的版本标记；声明检索投影与上下文贡献的默认行为。
 
@@ -54,6 +43,17 @@
 3. 此时它不可搜索、不可注入。pending/rejected Candidate 与 Artifact 检索、PreparedContext 完全隔离。
 4. 人工 Review 批准，在同一数据库事务中提交不可变 Runbook Revision，更新检索投影，并把 Candidate 置为 approved；任一步失败整体回滚。
 5. 因为清单声明了投影，Runbook 进入检索；因为声明了上下文贡献且部署方逐家族放行，它才可能以有界、带引用、被包裹为不可信历史的形式进入上下文，且不能注入原始 system/developer 指令。
+
+## 例二：只改生成方式，不改类型
+
+管理员已装载一个 `runbook` 扩展家族（安装与清单形状见例一），认为自动生成的运行手册步骤过于发散，想更换模型并收紧输出：
+
+1. 部署方已在目录中声明 `small-reasoner` 与 `strong-reasoner` 两个条目，并给出上界。
+2. Scope 管理员以 `family=generation-profile`、`artifact_id=runbook.generate` 写入 revision 1，内容指定 `target_family="runbook"`、`prompt.ref="runbook.generate"`（扩展清单里的模板 id）、`model="small-reasoner"`、有界设置与 `output_max_bytes`。
+3. 之后产生的每个 Runbook Candidate 都记录该档案的确切 revision 与结构化溯源；既有 Revision 不受影响。
+4. 要回滚，读取旧 revision 的 content，再写成一个新的、单调递增的 revision。
+
+观察到的差异：候选与正式 Revision 的 lineage 里多出一条精确的生成溯源引用；证据、schema、Review 与授权路径不变。把 prompt 换成另一个模板 id、把模型换成另一个目录条目、或改动任一有界设置，都会产生新的档案 revision，因此“变了什么”在 lineage 里可见。同一 `target_family` 也可并存多条档案、按 profile key 解析：例如 `runbook.fast`（小模型、低延迟）与 `runbook.slow`（强模型、高质量），生成时指名 key 即得不同的模型与预算。
 
 ## 作者流程
 
@@ -103,7 +103,7 @@ powercontext-runbook/
 
 - Prompt 的 Scope 级自定义指令保持原样，仍是内置家族 guidance 的唯一入口。生成档案不替换它，只能引用它。
 - `family=profile` 的用户画像家族继续保留其 per-scope 的 `activation_mode`，不迁移到通用 Review policy。
-- 内置家族一个都不迁移：它们继续走既有的 typed 生成端点，`generation_profile` 对内置候选恒为空。
+- 内置家族一个都不迁移：它们继续走既有的 typed 生成端点。内置家族接入生成档案不属于本 RFC 的 S1（见 Future possibilities）；在该工作落地之前，`generation_profile` 对内置候选恒为空。
 - 既有 Handoff 内容里的生成来源信息继续有效；它移入通用溯源槽是后续工作，不是本切片前置。
 
 # Reference-level explanation
@@ -156,7 +156,7 @@ powercontext.extension.json
 
 ```text
 读清单 + 闭合校验 → 兼容矩阵（平台版本区间）→ 逐版本 check_schema + 预解析全部 $ref + 校验版本标记为 `required + const` 且等于自己的版本键
-→ 结构 lint（逐层 `additionalProperties: false`、`required` 非空、无死 `$defs`）+ 骨架载荷的投影/渲染 dry run
+→ 结构 lint（逐层 `additionalProperties: false`、`required` 非空、无死 `$defs`）+ 骨架载荷的投影/渲染 dry run（含非空数组的逐元素渲染路径）
 → family 与 `prompt_templates[].id` 查重，校验 target_family 已声明
 → 构造薄包装类型并登记 → 落库家族描述 → 交给 runtime / repository / 授权层
 ```
@@ -206,9 +206,9 @@ Runbook        = Artifact[RunbookContent]      的子类，ClassVar family = "ru
 
 声明式家族无法携带投影函数与渲染函数，因此这两个行为由平台用**一条固定规则**决定，不引入任何可配置方言：
 
-- **投影**：取内容中所有字符串字段，排除版本标记 `schema`，按稳定顺序拼接为可搜索文本。这条规则恰好复现示例家族的预期投影，不附加配置项。
-- **渲染**：按 `Label: value` 逐字段渲染标量字段，section 标题取 `prepared_context.display_name`。
-- **边界不变**：投影只返回文本，分析、索引写入与 `lifecycle_state='active'` 过滤全部留在平台；贡献条目带精确 `ArtifactRef` 引用与单条字节上限，信任包络、引用格式与截断仍由 Runtime 生成。
+- **投影**：深度优先遍历内容树，取每一个字符串值、排除版本标记 `schema`，按与载荷规范化一致的稳定顺序拼接为可搜索文本；数组条目之间插入换行分界，短语匹配不会跨越两个数组元素。这条规则恰好复现示例家族的预期投影，不附加配置项。
+- **渲染**：按同一条遍历递归渲染：标量字段 `Label: value`（标签取 schema `title` 注解，无注解回退字段名），数组按索引逐元素 `Label[1]:`、`Label[2]:`，嵌套对象以路径标签展开；section 标题取 `prepared_context.display_name`。
+- **边界不变**：投影只返回文本，分析、索引写入与 `lifecycle_state='active'` 过滤全部留在平台；贡献条目带精确 `ArtifactRef` 引用与单条字节上限，预算超限时按整条数组元素裁剪并留截断标记，不在元素内部做字符截断，递归深度与元素数上限进 `limits.py`；信任包络、引用格式与截断仍由 Runtime 生成。
 
 **激活与升级时重建该家族的投影**：schema 或投影声明变化后，既有 head 的索引必须与原声明重新一致，否则检索结果会静默偏离。重建复用同一入口，在家族激活完成后执行一次。
 
@@ -218,9 +218,11 @@ Runbook        = Artifact[RunbookContent]      的子类，ClassVar family = "ru
 
 ### 存储与身份
 
-生成档案是内置的配置型制品家族 `generation-profile`：以不可变 Artifact Revision 存储，`artifact_id` 即 profile key（例如 `experience.generate`、`runbook.generate`），版本维度是 `revision`。写入走通用 Artifact create/replace，由 Scope 管理员执行；回滚通过读取旧 revision 再写成新的单调递增 revision 完成。
+生成档案是内置的配置型制品家族 `generation-profile`：以不可变 Artifact Revision 存储，`artifact_id` 即 profile key（例如 `runbook.generate`），版本维度是 `revision`。写入走通用 Artifact create/replace，由 Scope 管理员执行；回滚通过读取旧 revision 再写成新的单调递增 revision 完成。
 
 由于档案本身是同一 Scope 内的 Artifact，它可以直接进入 `pc_artifacts` 的复合外键。
+
+**revision 是「拥有者可写状态的版本」，不是可复现的生成身份。** `(artifact_id, revision)` 只标识管理员写入的不可变引用快照；实际生效的配置在解析时刻由该 revision、目录条目内容、扩展包身份与 `target_schema_version` 共同决定，由解析身份 `digest` 标识。因此：变更档案字节 ⇒ 新 revision；目录条目内容变化 ⇒ revision 不变而 `digest` 必变。
 
 ### 内容模型
 
@@ -239,7 +241,7 @@ GenerationProfileContent
   evidence_policy     object        只能收窄证据集合，不能放宽（按 Source kind 与 Artifact family）
 ```
 
-**Prompt 引用只有一个命名空间，由目标家族决定。** `target_family` 是内置家族时，`prompt.ref` 必须指向 prompt key；是扩展家族时，必须指向本部署已装载扩展清单里的 `prompt_templates[].id`。两者都是版本化的（前者由 definition/builtin 版本，后者由包内容寻址），生成溯源覆盖解析后的模板文本或编译后的指令。
+**Prompt 引用只有一个命名空间，由目标家族决定。** `target_family` 是内置家族时，`prompt.ref` 必须指向 prompt key；是扩展家族时，必须指向本部署已装载扩展清单里的 `prompt_templates[].id`。两者都是版本化的（前者由 definition/builtin 版本，后者由包内容寻址），生成溯源记录**解析后模板文本的摘要** `template_digest`。
 
 **输出契约不属于档案。** 家族持有清单 schema，档案只能引用它并收紧 `output_max_bytes`。
 
@@ -251,7 +253,7 @@ GenerationProfileContent
 
 生成时，Runtime 为操作解析一个精确的档案 revision，并在整个操作期间冻结它，包括模型重试。解析**以 profile key 为键**，不由目标家族反查——同一家族可以有多条画像，按家族解析是歧义的；家族身份由解析出的 `target_family` 反推。机制沿用 Prompt 的既有做法：一个 ContextVar 持有解析结果，`current_generation_profile(profile_key)` 只读该操作绑定的选择，从不读可变的全局 head；并发 Scope 之间互不干扰。优先级只有两层：Scope 档案 → 无画像（走内置 Auto 与部署设置）。调用方不能凭请求决定画像内容：调用方只能指名一个 profile key，画像正文由管理员写入并受授权与预算校验。
 
-生成溯源是**结构化字段加派生摘要**：`prompt_ref`（解析后的 prompt key 或模板 id）、`effective_limits`（档案声明与目录条目上界逐项取 min 之后真正生效的值）、`target_schema_version`，以及由 `digest_input_version` 冻结输入契约的 `digest`。结构供审计与 `diff` 阅读，直接读出“有效配置是什么”；
+生成溯源是**结构化字段加派生摘要**：`prompt_ref`（解析后的 prompt key 或模板 id）与模板文本摘要 `template_digest`、模型身份四元组 `catalog_entry`（目录条目名）/ `provider` / `model`（模型 id）/ `base_url`、生效边界 `effective_limits {model_settings, timeout_seconds, max_requests, output_max_bytes}`（档案声明与目录条目上界逐项取 min 之后真正生效的值）、扩展包身份 `{extension_id, version, lock_digest}`、`target_schema_version`，以及由 `digest_input_version` 冻结输入契约的 `digest`。结构供审计与 `diff` 阅读。
 
 ### 授权
 
@@ -285,11 +287,11 @@ POST /v1/generation/generate
 
 ## 生成溯源
 
-`ArtifactLineage` 增加一对可空的非证据字段，`generation_source: ArtifactRef | null` 与 `generation_provenance: GenerationProvenance | null`，沿用全有全无校验。`GenerationProvenance` 是**结构化字段加派生摘要**：`prompt_ref`、`effective_limits`、`target_schema_version`、`digest`、`digest_input_version`。
+`ArtifactLineage` 增加一对可空的非证据字段，`generation_source: ArtifactRef | null` 与 `generation_provenance: GenerationProvenance | null`，沿用全有全无校验。`GenerationProvenance` 是**结构化字段加派生摘要**，结构化字段记录解析时刻的完整快照而非可变引用：`prompt_ref`、模板文本摘要 `template_digest`、扩展包身份 `{extension_id, version, lock_digest}`、模型身份四元组 `catalog_entry`/ `provider` / `model`（模型 id）/ `base_url`、生效边界 `effective_limits {model_settings, timeout_seconds, max_requests, output_max_bytes}`、`target_schema_version`、`digest`、`digest_input_version`。只记条目名或 key 会在目录或包变更后丢失身份，血缘必须仍能回答“当时用的到底是什么”：目录条目内容不另存历史版本，其取证由本快照承担；扩展模板文本随激活按 `(family, schema_version)` 落库于 `pc_extension_families` 且只增不删，升级或卸载之后仍可从该锚点恢复。
 
-摘要用于判等、去重、幂等键与跨部署比对——一个 64 位十六进制串，可建索引、不泄漏内容；结构用于审计与 `diff`——运维与评审要能直接读出“用哪个 prompt、限流多少、落在哪一版目标 schema”，而哈希只能回答“是否相同”。这个形状不是新造的：`builtin/artifacts/handoff/generation_metadata.py:44-58` 的 `HandoffGenerationOrigin` 已经是「结构化字段 + `compiled_digest` + `original_draft_digest`」。
+摘要用于判等、去重与跨部署比对——一个 64 位十六进制串，可建索引、不泄漏内容；结构用于审计与 `diff`——运维与评审要能直接读出“用哪个 prompt、限流多少、落在哪一版目标 schema”，而哈希只能回答“是否相同”。这个形状不是新造的：`builtin/artifacts/handoff/generation_metadata.py:44-58` 的 `HandoffGenerationOrigin` 已经是「结构化字段 + `compiled_digest` + `original_draft_digest`」。
 
-摘要的输入契约必须显式冻结：`digest` 是 `rfc8785` 规范化后对**固定字段子集**取的 `sha256`，该子集由 `digest_input_version` 标识；新增的可选字段默认**不进入**摘要输入，避免“加一个字段 ⇒ 所有历史记录与新记录都判为不同”的假差异。覆盖面包含**模型目录条目的内容**（provider / base_url / bounds），而不只是条目名——否则部署方改了目录，血缘看不出差别。内容是否被人工编辑是另一回事，由另一个摘要承担，不与配置摘要混用。
+摘要的输入契约必须显式冻结：`digest` 是 `rfc8785` 规范化后对**固定字段子集**取的 `sha256`，该子集由 `digest_input_version` 标识，首个版本即包含模型身份四元组、生效边界 `effective_limits`、模板文本摘要、包标识与 `target_schema_version`——目录条目内容（provider / base_url / bounds）的变化改变摘要，而不只是条目名；此后新增的可选字段默认**不进入**摘要输入，避免“加一个字段 ⇒ 所有历史记录与新记录都判为不同”的假差异。内容是否被人工编辑是另一回事，由另一个摘要承担，不与配置摘要混用。
 
 持久化沿用既有形状：`pc_artifacts` 没有溯源列，生成溯源同样放在独立表，由 `ArtifactRepository` 在写 revision 时写入、在读取 lineage 时回填。候选侧在 `pc_artifact_candidate_versions` 增加 `generation_profile_family` / `generation_profile_artifact_id` / `generation_profile_revision` / `generation_provenance` 四列，再增加一列**派生**的 `generation_digest`，五列同生同灭，并带指向 `pc_artifacts` 的复合外键（档案与制品同 Scope，外键成立）。
 
@@ -299,7 +301,7 @@ POST /v1/generation/generate
 
 家族路径由枚举改为注册表驱动
 
-批准仍在单一数据库事务内完成：按候选记录的 `schema_version` 校验提案、执行声明式 lineage、写 Artifact、更新派生索引、`mark_approved` 五步同事务，任一步失败整体回滚。`cardinality = "singleton"` 时，候选未显式给 target 则隐式指向当前 head 并做 CAS；`collection` 保持显式语义。
+批准仍在单一数据库事务内完成：按候选记录的 `schema_version` 校验提案、执行声明式 lineage、写 Artifact、更新派生索引、`mark_approved` 五步同事务，任一步失败整体回滚。`cardinality = "singleton"` 时，单例 target 在**候选创建时**冻结：显式给出的 target 直接记录，未给出的在该时刻解析当前 head 并记录进候选行的 `target_*` 列（首次创建尚无 head，记录“预期不存在”）；审批只对记录值做 CAS，不在审批时重新解析 latest，从而消除创建与审批之间的 head 漂移。`collection` 保持显式语义。
 
 Owner 语义对扩展家族是必填的：新家族会自动被 `logical_artifacts()` 覆盖，缺 owner 关系会让整个 Scope 的上下文不可用。
 
@@ -308,7 +310,7 @@ Owner 语义对扩展家族是必填的：新家族会自动被 `logical_artifac
 | 表 | 性质 | 变更 |
 | --- | --- | --- |
 | `pc_artifact_generation_provenance` | **新增** | 按 `(scope_id, family, artifact_id, revision)` 记录 Artifact Revision 的生成溯源：档案引用与结构化生成溯源。与既有 `pc_artifact_publications` 同形，引用列带指向 `pc_artifacts` 的复合外键。 |
-| `pc_extension_families` | **新增** | 家族描述：`(family, schema_version)` 主键，存该版本的 JSON Schema 文本、来源扩展标识与激活时间；只增不删，被制品表与候选表以 `RESTRICT` 复合外键引用。它是停用后仍能校验与渲染历史 Revision 的依据，也是 `diff` 的权威输入。 |
+| `pc_extension_families` | **新增** | 家族描述：`(family, schema_version)` 主键，存该版本的 JSON Schema 文本、来源扩展标识与激活时间，并记录该版本清单声明的 `prompt_templates[].id` 与模板文本；只增不删，被制品表与候选表以 `RESTRICT` 复合外键引用。它是停用后仍能校验、渲染历史 Revision 并解析生成溯源模板锚点的依据，也是 `diff` 的权威输入。 |
 | `pc_artifact_candidate_versions` | 修改 | 增加 `schema_version` 列（由内容标记派生，非空并带指向 `pc_extension_families` 的复合外键）、生成溯源四列 + 派生的 `generation_digest` 列、一条五列同生同灭的 CHECK，以及指向 `pc_artifacts` 的复合外键。既有 `target_*` 列不变。 |
 | `pc_artifacts` | 修改 | 增加 `schema_version` 列：内置家族为 `NULL`，声明式家族非空（内置集合 ⇔ `NULL`），并带指向 `pc_extension_families(family, schema_version)` 的 `RESTRICT` 复合外键。其余列不变。 |
 | `pc_artifact_heads` | 不变 | `family` 本就是无 CHECK 的自由字符串；`searchable_text` 已是通用列，扩展家族复用同一套 active-head 过滤。 |
@@ -399,15 +401,20 @@ S1 只有显式触发生成：调用方（Agent、CLI 或集成）在证据齐�
 
 ## 实现与验收
 
+实现按两条切片推进；本节验收是全局门槛，不随切片重排：
+
+- **S1**：一个 Runbook 扩展家族 + 一条生成档案，覆盖精确证据 → Candidate → 人工 Review → 检索与上下文贡献 → 停用后的精确读取；含通用生成端点、`pc_extension_families` 与 `schema_version` 落库、生成溯源。对应验收 1、2a–2d、3–16、17、19–22、25–27。
+- **S2**：`extension lock/diff`、`enable` / `print-config` 成型、config 向导 extensions 步骤、发现端点四态细化。对应验收 18、23、24。
+
 验收覆盖外部行为：
 
 1. 一个样例扩展（随实现提供，不作为本 RFC 的附件）从精确证据派生类型化 Candidate，经人工 Review 批准，提交不可变 Revision；证据与溯源在 lineage 中可精确读出。
-2. 变更 prompt、模型、设置、schema 或扩展包版本时产生新的精确档案 revision，并在 lineage 中可见。
+2. 生成身份的变更可观测：**2a** 改档案内容 ⇒ 新的精确 profile revision；**2b** 改家族 schema ⇒ 新的精确 `schema_version`；**2c** 同一 `prompt_templates[].id` 下换文本 ⇒ 新的扩展包版本身份；**2d** 目录条目内容变化 ⇒ 不产生新版本，但 `digest` 必变。四者分别在 lineage 中以 `generation_profile_revision`、`target_schema_version`、`extension_package` 与 `template_digest`、`digest` 可见；2d 另要求结构化快照能在条目改名、换模型或撤下后读出当时的模型与端点。
 3. 无效清单（未知字段、非法 schema、重复家族、命名冲突、`target_family` 未声明）在激活期被拒绝，只在 readiness 与发现端点中可见；其余家族与生成路径不受影响。运行期失败在持久化 Candidate 之前终止。
 4. 生成器无法分配最终 Artifact 身份、批准自己的 Candidate、发布内容或自我授权；相关 API 不存在。
 5. Artifact ID 由平台按 family 派生前缀并加 CAS 分配，与内容无关；作者不声明前缀，也没有前缀冲突这一类失败。
 6. 空结果按 `noop_field` 判定：不写候选、返回显式 `no_op`、诊断 content-free，且与 `failure` 路径可区分。
-7. `cardinality` 生效：`singleton` 在候选未给 target 时演进同一逻辑产物并做 head CAS；`collection` 保持显式语义。
+7. `cardinality` 生效：`singleton` 在候选未给 target 时演进同一逻辑产物并做 head CAS；`collection` 保持显式语义。单例 target 在候选创建时冻结：候选创建与审批之间 head 被并发推进时，审批按候选记录的 target 做 CAS 并返回版本冲突；首次创建按“预期不存在”比对，head 已被并发创建时同样返回版本冲突。
 8. 声明式 schema 的完整表达力生效：`allOf`/`if`/`then`、嵌套 `minLength`/`maxItems`、`const`、`additionalProperties: false` 与跨家族载荷拒绝都在激活期与审批路径上被强制。
 9. 载荷规范化生效：同语义不同键序的载荷产生相同存储字节。
 10. 未声明投影的扩展家族不可检索；未声明或未放行的贡献器不注入；直接请求该家族组装返回 422。
@@ -425,6 +432,9 @@ S1 只有显式触发生成：调用方（Agent、CLI 或集成）在证据齐�
 22. **版本落点**：内容标记与 `schema_version` 列始终一致（列由内容派生，不一致即类型化错误）；未登记的版本无法写入；清理仍被引用的描述被 `RESTRICT` 拒绝；停用与降级后仍能按记录版本校验与渲染。
 23. **default-deny 可解释**：`GET /v1/extensions` 给出四态与「下一步缺什么」；检索与注入失败区分「家族不存在 / 投影未声明 / 未放行」；MCP 只读客户端能列出扩展家族与可用档案 key。
 24. **管理员闭环**：从空配置到「家族可生成」全程不需要手写 JSON——`extension enable` / `print-config` 产出配置片段，`generation-profile` 子命令写入档案并回显 revision 与结构化溯源，config 向导覆盖同一步骤。
+25. Runbook 的 `steps[]` 按原序、以 `Steps[1]:`… 形式出现在 PreparedContext；`symptoms[]` / `failure_handling[]` 同样可达；超预算时按整条元素裁剪且截断标记可见。
+26. 投影覆盖嵌套字符串：`steps` 中的词可被检索命中；两个数组元素之间的短语查询不产生跨元素误匹配；`schema` 版本标记不进入投影。
+27. 同语义不同键序的载荷产生相同的 `searchable_text` 字节（与载荷规范化同序）。
 
 # Drawbacks
 
@@ -445,6 +455,7 @@ S1 只有显式触发生成：调用方（Agent、CLI 或集成）在证据齐�
 - 把每个新结果都当作 Memory：混淆持久事实/决策与领域特定交付物。
 - 让自定义输出自动进入 PreparedContext：绕过选择、引用、预算、信任与授权。
 - 档案自带 `base_url`：让 Scope 管理员可指定任意出向目标，且 egress 策略无处挂载。
+- 让档案 revision 跟随目录条目内容或扩展包身份变化：目录条目的写者是部署方、包版本的写者是扩展作者，而档案写入只需要 `SCOPE_ADMIN`；让 revision 跟随等于要求目录只增不改，并把模型可达性的控制权从部署方移交给各 Scope，带来运维负担，而不是可复现性。
 - 为扩展家族另开一套 `/v1/extensions/...` 操作面：把同一资源拆成两套 API 面，与单一 repository 路由冲突。
 - 扩展家族提供管理直写路径：会要求 `CreateArtifactRequest` 的判别联合开环，并把“扩展预置内容”引入信任面。S1 只保留审批产生。
 
@@ -470,7 +481,8 @@ S1 只有显式触发生成：调用方（Agent、CLI 或集成）在证据齐�
 # Future possibilities
 
 - 自动触发：接入既有 source-window 轮次，沿用证据过滤与“全被过滤”诊断。
-- 增加投影与渲染的声明式字段列表，增强声明式表达能力。
+- 内置家族接入生成档案：让 Experience、Skill 等内置家族也能被档案定向生成。
+- 增加投影与渲染的声明式字段列表，增强声明式表达能力
 - 代码钩子作为逃生口：为需要自定义投影、渲染与 lineage 的家族提供受能力边界约束的扩展点，同时保留声明式作为默认。
 - 扩展提供向量投影或自定义排序，与既有 FTS 融合。
 - 货币成本预算：需要模型计价数据与更细的用量归属。
