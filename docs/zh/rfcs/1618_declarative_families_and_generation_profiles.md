@@ -117,7 +117,7 @@ powercontext-runbook/
 | Runtime | 启动期装载扩展清单并构造薄包装类型；生成路径按解析后的档案构造 `InferenceLimits` 与模型设置。 |
 | Host 集成 | 不新增自动注入行为；未声明贡献器的家族不进入上下文。 |
 | MCP | 不新增自动注册或档案写入工具；只读白名单新增发现端点，使 Agent 能列出可用家族与档案 key。 |
-| 持久化 | 新增生成溯源表与家族描述表 `pc_extension_families`；`pc_artifacts` 与候选版本表增加 `schema_version` 列（由内容标记派生）与结构化生成溯源列；档案与扩展家族制品复用 `pc_artifacts`/`pc_artifact_heads`。 |
+| 持久化 | 新增生成溯源表、家族描述表 `pc_extension_families` 与模板文本快照表 `pc_extension_prompt_templates`；`pc_artifacts` 与候选版本表增加 `schema_version` 列（由内容标记派生）与结构化生成溯源列；档案与扩展家族制品复用 `pc_artifacts`/`pc_artifact_heads`。 |
 | CLI | 新增 `powercontext extension` 命令组（新命令提供者）：作者侧 `init`、`validate`、`lock`、`diff`；管理员侧 `enable`、`print-config`、`generation-profile`。config 向导新增 extensions 步骤。 |
 | 配置 | 新增扩展包路径清单、模型目录，均为服务端配置，无 HTTP 写接口。 |
 
@@ -206,7 +206,7 @@ Runbook        = Artifact[RunbookContent]      的子类，ClassVar family = "ru
 
 声明式家族无法携带投影函数与渲染函数，因此这两个行为由平台用**一条固定规则**决定，不引入任何可配置方言：
 
-- **投影**：深度优先遍历内容树，取每一个字符串值、排除版本标记 `schema`，按与载荷规范化一致的稳定顺序拼接为可搜索文本；数组条目之间插入换行分界，短语匹配不会跨越两个数组元素。这条规则恰好复现示例家族的预期投影，不附加配置项。
+- **投影**：深度优先遍历内容树，取每一个字符串值、排除版本标记 `schema`，按与载荷规范化一致的稳定顺序拼接为可搜索文本；数组条目之间插入换行分界。这条规则恰好复现示例家族的预期投影，不附加配置项。
 - **渲染**：按同一条遍历递归渲染：标量字段 `Label: value`（标签取 schema `title` 注解，无注解回退字段名），数组按索引逐元素 `Label[1]:`、`Label[2]:`，嵌套对象以路径标签展开；section 标题取 `prepared_context.display_name`。
 - **边界不变**：投影只返回文本，分析、索引写入与 `lifecycle_state='active'` 过滤全部留在平台；贡献条目带精确 `ArtifactRef` 引用与单条字节上限，预算超限时按整条数组元素裁剪并留截断标记，不在元素内部做字符截断，递归深度与元素数上限进 `limits.py`；信任包络、引用格式与截断仍由 Runtime 生成。
 
@@ -287,7 +287,7 @@ POST /v1/generation/generate
 
 ## 生成溯源
 
-`ArtifactLineage` 增加一对可空的非证据字段，`generation_source: ArtifactRef | null` 与 `generation_provenance: GenerationProvenance | null`，沿用全有全无校验。`GenerationProvenance` 是**结构化字段加派生摘要**，结构化字段记录解析时刻的完整快照而非可变引用：`prompt_ref`、模板文本摘要 `template_digest`、扩展包身份 `{extension_id, version, lock_digest}`、模型身份四元组 `catalog_entry`/ `provider` / `model`（模型 id）/ `base_url`、生效边界 `effective_limits {model_settings, timeout_seconds, max_requests, output_max_bytes}`、`target_schema_version`、`digest`、`digest_input_version`。只记条目名或 key 会在目录或包变更后丢失身份，血缘必须仍能回答“当时用的到底是什么”：目录条目内容不另存历史版本，其取证由本快照承担；扩展模板文本随激活按 `(family, schema_version)` 落库于 `pc_extension_families` 且只增不删，升级或卸载之后仍可从该锚点恢复。
+`ArtifactLineage` 增加一对可空的非证据字段，`generation_source: ArtifactRef | null` 与 `generation_provenance: GenerationProvenance | null`，沿用全有全无校验。`GenerationProvenance` 是**结构化字段加派生摘要**，结构化字段记录解析时刻的完整快照而非可变引用：`prompt_ref`、模板文本摘要 `template_digest`、扩展包身份 `{extension_id, version, lock_digest}`、模型身份四元组 `catalog_entry`/ `provider` / `model`（模型 id）/ `base_url`、生效边界 `effective_limits {model_settings, timeout_seconds, max_requests, output_max_bytes}`、`target_schema_version`、`digest`、`digest_input_version`。只记条目名或 key 会在目录或包变更后丢失身份，血缘必须仍能回答“当时用的到底是什么”：目录条目内容不另存历史版本，其取证由本快照承担；扩展模板文本随激活按 `template_digest` 落库于 `pc_extension_prompt_templates` 且只增不删，升级或卸载之后仍可从该锚点恢复。
 
 摘要用于判等、去重与跨部署比对——一个 64 位十六进制串，可建索引、不泄漏内容；结构用于审计与 `diff`——运维与评审要能直接读出“用哪个 prompt、限流多少、落在哪一版目标 schema”，而哈希只能回答“是否相同”。这个形状不是新造的：`builtin/artifacts/handoff/generation_metadata.py:44-58` 的 `HandoffGenerationOrigin` 已经是「结构化字段 + `compiled_digest` + `original_draft_digest`」。
 
@@ -310,7 +310,8 @@ Owner 语义对扩展家族是必填的：新家族会自动被 `logical_artifac
 | 表 | 性质 | 变更 |
 | --- | --- | --- |
 | `pc_artifact_generation_provenance` | **新增** | 按 `(scope_id, family, artifact_id, revision)` 记录 Artifact Revision 的生成溯源：档案引用与结构化生成溯源。与既有 `pc_artifact_publications` 同形，引用列带指向 `pc_artifacts` 的复合外键。 |
-| `pc_extension_families` | **新增** | 家族描述：`(family, schema_version)` 主键，存该版本的 JSON Schema 文本、来源扩展标识与激活时间，并记录该版本清单声明的 `prompt_templates[].id` 与模板文本；只增不删，被制品表与候选表以 `RESTRICT` 复合外键引用。它是停用后仍能校验、渲染历史 Revision 并解析生成溯源模板锚点的依据，也是 `diff` 的权威输入。 |
+| `pc_extension_families` | **新增** | 家族描述：`(family, schema_version)` 主键，存该版本的 JSON Schema 文本、来源扩展标识与激活时间；只增不删，被制品表与候选表以 `RESTRICT` 复合外键引用。它是停用后仍能校验与渲染历史 Revision 的依据，也是 `diff` 的权威输入。 |
+| `pc_extension_prompt_templates` | **新增** | 模板文本快照：`template_digest` 主键，存 `template_id` 与解析后的模板文本；只增不删，被生成溯源以 `RESTRICT` 外键引用。它是生成溯源模板锚点的依据：模板文本的版本轴与家族描述的 schema 版本轴相互独立，同一 `(family, schema_version)` 下可并存多份模板文本。 |
 | `pc_artifact_candidate_versions` | 修改 | 增加 `schema_version` 列（由内容标记派生，非空并带指向 `pc_extension_families` 的复合外键）、生成溯源四列 + 派生的 `generation_digest` 列、一条五列同生同灭的 CHECK，以及指向 `pc_artifacts` 的复合外键。既有 `target_*` 列不变。 |
 | `pc_artifacts` | 修改 | 增加 `schema_version` 列：内置家族为 `NULL`，声明式家族非空（内置集合 ⇔ `NULL`），并带指向 `pc_extension_families(family, schema_version)` 的 `RESTRICT` 复合外键。其余列不变。 |
 | `pc_artifact_heads` | 不变 | `family` 本就是无 CHECK 的自由字符串；`searchable_text` 已是通用列，扩展家族复用同一套 active-head 过滤。 |
@@ -403,13 +404,13 @@ S1 只有显式触发生成：调用方（Agent、CLI 或集成）在证据齐�
 
 实现按两条切片推进；本节验收是全局门槛，不随切片重排：
 
-- **S1**：一个 Runbook 扩展家族 + 一条生成档案，覆盖精确证据 → Candidate → 人工 Review → 检索与上下文贡献 → 停用后的精确读取；含通用生成端点、`pc_extension_families` 与 `schema_version` 落库、生成溯源。对应验收 1、2a–2d、3–16、17、19–22、25–27。
+- **S1**：一个 Runbook 扩展家族 + 一条生成档案，覆盖精确证据 → Candidate → 人工 Review → 检索与上下文贡献 → 停用后的精确读取；含通用生成端点、`pc_extension_families` 与 `schema_version` 落库、模板文本快照、生成溯源。对应验收 1、2a–2e、3–16、17、19–22、25–27。
 - **S2**：`extension lock/diff`、`enable` / `print-config` 成型、config 向导 extensions 步骤、发现端点四态细化。对应验收 18、23、24。
 
 验收覆盖外部行为：
 
 1. 一个样例扩展（随实现提供，不作为本 RFC 的附件）从精确证据派生类型化 Candidate，经人工 Review 批准，提交不可变 Revision；证据与溯源在 lineage 中可精确读出。
-2. 生成身份的变更可观测：**2a** 改档案内容 ⇒ 新的精确 profile revision；**2b** 改家族 schema ⇒ 新的精确 `schema_version`；**2c** 同一 `prompt_templates[].id` 下换文本 ⇒ 新的扩展包版本身份；**2d** 目录条目内容变化 ⇒ 不产生新版本，但 `digest` 必变。四者分别在 lineage 中以 `generation_profile_revision`、`target_schema_version`、`extension_package` 与 `template_digest`、`digest` 可见；2d 另要求结构化快照能在条目改名、换模型或撤下后读出当时的模型与端点。
+2. 生成身份的变更可观测：**2a** 改档案内容 ⇒ 新的精确 profile revision；**2b** 改家族 schema ⇒ 新的精确 `schema_version`；**2c** 同一 `prompt_templates[].id` 下换文本 ⇒ 新的扩展包版本身份；**2d** 目录条目内容变化 ⇒ 不产生新版本，但 `digest` 必变。四者分别在 lineage 中以 `generation_profile_revision`、`target_schema_version`、`extension_package` 与 `template_digest`、`digest` 可见；2d 另要求结构化快照能在条目改名、换模型或撤下后读出当时的模型与端点。**2e** 同一 `schema_version`、同一 `prompt_templates[].id` 下，两个包版本携带的模板文本不同 ⇒ 两份模板文本快照都留存；卸载扩展包之后两段文本都仍可读出，且各自 revision 的 `template_digest` 都能与原文核对。
 3. 无效清单（未知字段、非法 schema、重复家族、命名冲突、`target_family` 未声明）在激活期被拒绝，只在 readiness 与发现端点中可见；其余家族与生成路径不受影响。运行期失败在持久化 Candidate 之前终止。
 4. 生成器无法分配最终 Artifact 身份、批准自己的 Candidate、发布内容或自我授权；相关 API 不存在。
 5. Artifact ID 由平台按 family 派生前缀并加 CAS 分配，与内容无关；作者不声明前缀，也没有前缀冲突这一类失败。
@@ -433,7 +434,7 @@ S1 只有显式触发生成：调用方（Agent、CLI 或集成）在证据齐�
 23. **default-deny 可解释**：`GET /v1/extensions` 给出四态与「下一步缺什么」；检索与注入失败区分「家族不存在 / 投影未声明 / 未放行」；MCP 只读客户端能列出扩展家族与可用档案 key。
 24. **管理员闭环**：从空配置到「家族可生成」全程不需要手写 JSON——`extension enable` / `print-config` 产出配置片段，`generation-profile` 子命令写入档案并回显 revision 与结构化溯源，config 向导覆盖同一步骤。
 25. Runbook 的 `steps[]` 按原序、以 `Steps[1]:`… 形式出现在 PreparedContext；`symptoms[]` / `failure_handling[]` 同样可达；超预算时按整条元素裁剪且截断标记可见。
-26. 投影覆盖嵌套字符串：`steps` 中的词可被检索命中；两个数组元素之间的短语查询不产生跨元素误匹配；`schema` 版本标记不进入投影。
+26. 投影覆盖嵌套字符串：`steps` 中的词可被检索命中；`schema` 版本标记不进入投影。
 27. 同语义不同键序的载荷产生相同的 `searchable_text` 字节（与载荷规范化同序）。
 
 # Drawbacks
