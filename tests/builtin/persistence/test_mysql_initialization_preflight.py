@@ -164,6 +164,8 @@ def test_evidence_recovery_resumes_before_final_schema_marker(tmp_path, monkeypa
 
     configuration = evidence_configuration(None)
     previous = previous_upstream_bundle(tmp_path / "previous-bundle", None)
+    assert previous.head == "v1_4_1_004"
+    predecessor = "v1_4_1_005"
     database = tmp_path / "managed.db"
     sqlite = SQLiteMigrationRunner(database, previous, configuration=configuration)
     sqlite.apply(plan_id=sqlite.plan().plan_id, accepted=True, maintenance_confirmed=True)
@@ -201,23 +203,33 @@ def test_evidence_recovery_resumes_before_final_schema_marker(tmp_path, monkeypa
             source_fingerprint=runner.schema.fingerprint({"tables": {}, "views": [], "triggers": []}),
             bundle_checksum=runner.checksum,
             configuration_digest=runner.configuration_digest,
-            last_revision="v1_4_1_004",
+            last_revision=predecessor,
             pending_revision="v1_5_0_001",
             maintenance_window_id="interrupted-evidence-ddl",
             backup_policy="auto",
             backup_state="not_required",
-            release_checksums={revision: runner.checksums[revision] for revision in previous.revisions},
+            release_checksums={
+                revision: runner.checksums[revision]
+                for revision in runner.bundle.revisions[: runner.bundle.revisions.index(predecessor) + 1]
+            },
         )
     )
     engine = create_engine(f"sqlite:///{database}")
     try:
         with engine.connect() as connection:
+            # The interrupted evidence DDL starts only after the released
+            # description migration, including its real version advancement.
+            config = runner.bundle.config(connection)
+            config.attributes["configuration"] = configuration
+            command.upgrade(config, predecessor)
+            assert connection.exec_driver_sql("SELECT version_num FROM pc_schema_revision").scalar_one() == predecessor
             statements = json.loads((runner.bundle.snapshot_directory / "schemas/sqlite-v1_5_0_001.json").read_text())[
                 "create"
             ]
             for statement in statements[:created_tables]:
                 connection.exec_driver_sql(statement)
             connection.commit()
+            assert connection.exec_driver_sql("SELECT version_num FROM pc_schema_revision").scalar_one() == predecessor
             monkeypatch.setattr(migration, "mysql_inventory", lambda _connection: copy.deepcopy(inventory))
             monkeypatch.setattr(mysql_schema, "mysql_inventory", lambda _connection: copy.deepcopy(inventory))
             monkeypatch.setattr(
@@ -226,7 +238,7 @@ def test_evidence_recovery_resumes_before_final_schema_marker(tmp_path, monkeypa
             monkeypatch.setattr(connections, "coordination", lambda _identity: {})
             before = database.read_bytes(), journal.path.read_bytes()
             plan = runner.plan()
-            assert plan.state == "recovery_required" and plan.source_revision == "v1_4_1_004"
+            assert plan.state == "recovery_required" and plan.source_revision == predecessor
             assert plan.revisions == ("v1_5_0_001", "v1_5_0_002")
             assert (database.read_bytes(), journal.path.read_bytes()) == before
             assert connection.exec_driver_sql("SELECT schema_version FROM pc_atomic_memory_evidence_schema").all() == []
@@ -253,6 +265,7 @@ def test_evidence_recovery_resumes_before_final_schema_marker(tmp_path, monkeypa
             monkeypatch.setattr(runner, "_upgrade", execute_revision)
             result = runner.apply(plan_id=plan.plan_id, accepted=True, maintenance_confirmed=True)
             assert result.state == "ready" and result.revision == "v1_5_0_002"
+            assert result.backup_state == "not_required"
             assert runner.verify().state == "ready"
             assert connection.exec_driver_sql("SELECT schema_version FROM pc_atomic_memory_evidence_schema").all() == [
                 ("p0005",)
@@ -260,6 +273,9 @@ def test_evidence_recovery_resumes_before_final_schema_marker(tmp_path, monkeypa
             completed = journal.read()
             assert completed is not None and completed.state == "complete"
             assert completed.maintenance_window_id == "interrupted-evidence-ddl"
+            assert completed.source_revision is None and completed.backup_state == "not_required"
+            assert completed.last_revision == "v1_5_0_002" and completed.pending_revision is None
+            assert completed.release_checksums == runner.checksums
             assert not runner.apply(plan_id=runner.plan().plan_id, accepted=True, maintenance_confirmed=True).changed
 
             # An empty marker is resumable only while the original evidence
