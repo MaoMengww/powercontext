@@ -34,7 +34,8 @@ from powercontext.builtin.runtime.processing_registry import canonical_processin
 def _created_tables(path):
     """Tables a frozen SQLite schema resource registers, in its exact bytes."""
 
-    payload = json.loads(path.read_text(encoding="utf-8"))["create"]
+    resource = json.loads(path.read_text(encoding="utf-8"))
+    payload = resource["create"] if "create" in resource else resource["statement"]
     statements = [payload] if isinstance(payload, str) else payload
     return {
         match[1]
@@ -67,6 +68,7 @@ def previous_bundle(directory, embedding):
         (directory / "mysql" / "versions" / f"{revision}.py").unlink(missing_ok=True)
         del manifest["sqlite_fingerprints"][revision]
         del manifest["domain_readiness"][revision]
+        manifest.get("mysql_wrappers", {}).pop(revision, None)
         manifest["domain_steps"] = [step for step in manifest["domain_steps"] if step["revision"] != revision]
     manifest["affected_objects"] = [name for name in manifest["affected_objects"] if name not in created]
     for module in pruned_modules - {step["module"] for step in manifest["domain_steps"]}:
@@ -114,7 +116,7 @@ def test_registered_s1401_upgrade_preserves_completed_evidence_and_matches_fresh
     upgraded = SQLiteMigrationRunner(database, bundle, configuration=config)
     plan = upgraded.plan()
     assert plan.source_revision == "s1401"
-    assert plan.revisions == ("s1402", "v1_4_1_004", "v1_5_0_001", "v1_5_0_002")
+    assert plan.revisions == ("s1402", "v1_4_1_004", "v1_4_1_005", "v1_5_0_001", "v1_5_0_002")
     assert apply(upgraded).revision == "v1_5_0_002"
     assert upgraded.verify().state == "ready"
     assert not apply(upgraded).changed

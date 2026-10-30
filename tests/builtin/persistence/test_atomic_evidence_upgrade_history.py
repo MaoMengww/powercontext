@@ -62,7 +62,7 @@ UPSTREAM_RELEASE_CHECKSUMS = {
 
 
 def previous_upstream_bundle(directory, embedding):
-    """Drop only the appended evidence registration, retaining upstream history.
+    """Drop registrations appended after the frozen upstream owner-recovery revision.
 
     Historical checksums below are independent upstream constants: copying the
     installed resources is not allowed to silently redefine the old release.
@@ -73,7 +73,7 @@ def previous_upstream_bundle(directory, embedding):
     shutil.copytree(current.directory, directory, ignore=shutil.ignore_patterns("__pycache__"))
     manifest_path = directory / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    appended = {EVIDENCE_REVISION, PROJECTION_REVISION}
+    appended = current.revisions[current.revisions.index("v1_4_1_004") + 1 :]
     removed_resources = {resource for revision in appended for resource in manifest["revision_resources"].pop(revision)}
     removed_steps = [step for step in manifest["domain_steps"] if step["revision"] in appended]
     manifest["domain_steps"] = [step for step in manifest["domain_steps"] if step["revision"] not in appended]
@@ -154,7 +154,7 @@ def test_evidence_upgrade_accepts_upstream_history_and_preserves_data(tmp_path, 
     assert plan.state == "migration_required"
     assert plan.source_revision == "v1_4_1_004"
     assert plan.target_revision == PROJECTION_REVISION
-    assert plan.revisions == (EVIDENCE_REVISION, PROJECTION_REVISION)
+    assert plan.revisions == ("v1_4_1_005", EVIDENCE_REVISION, PROJECTION_REVISION)
     assert plan.domain_steps == ("atomic_memory_evidence", "atomic_memory_evidence_projection")
     assert upgraded.evidence_path.read_bytes() == old_evidence_bytes
     result = upgraded.apply(plan_id=plan.plan_id, accepted=True, maintenance_confirmed=True)
@@ -169,7 +169,12 @@ def test_evidence_upgrade_accepts_upstream_history_and_preserves_data(tmp_path, 
     completed_evidence = json.loads(completed_evidence_bytes)
     assert completed_evidence["state"] == "complete"
     assert {revision: completed_evidence["release_checksums"][revision] for revision in expected} == expected
-    assert set(completed_evidence["release_checksums"]) == {*expected, EVIDENCE_REVISION, PROJECTION_REVISION}
+    assert set(completed_evidence["release_checksums"]) == {
+        *expected,
+        "v1_4_1_005",
+        EVIDENCE_REVISION,
+        PROJECTION_REVISION,
+    }
     ready = reopened.plan()
     assert ready.state == "ready"
     assert ready.revisions == ()

@@ -377,6 +377,7 @@ def test_generated_trust_claims_do_not_upgrade_neutral_evidence(migration_backen
             candidate = AtomicMemoryCandidate(
                 kind="fact",
                 text=generated_text,
+                description="Claimed release-rule authority.",
                 evidence_ids=tuple(item.evidence_id for item in request.evidence),
             )
             return GenerationResult(output=AtomicMemoryExtractionOutput(candidates=(candidate,)))

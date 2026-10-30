@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -49,6 +50,7 @@ from powercontext.builtin.artifacts.atomic_memory.models import (
     AtomicMemoryWrite,
     PreparedAtomicMemory,
 )
+from powercontext.builtin.artifacts.atomic_memory.summary import default_description
 from powercontext.builtin.artifacts.memory.canonical import canonical_error_code, normalize_text
 from powercontext.builtin.artifacts.memory.errors import InvalidMemoryCandidateError
 from powercontext.builtin.artifacts.merge import ArtifactMergeSecurity, ArtifactMergeService, MergeTags
@@ -305,13 +307,19 @@ class AtomicMemoryMergeAdapter:
         await self.projections.remove(connection, scope_id, artifact_id)
 
 
-class _AtomicMemoryMergeService(ArtifactMergeService):
-    """Accept evidence with every new body, including retired restoration results.
+class _AtomicPreviewAdapter:
+    def __init__(self, signer):
+        self.signer = signer
 
-    Shared merges, the Atomic facade and processing all use this commit seam.
-    State-only writes must not attest old bodies. Capture joins the caller's
-    transaction so its failure rolls back authority, governance and projections.
-    """
+    def encode(self, plan):
+        return self.signer.encode(_atomic_plan(plan))
+
+    def validate(self, *args, **kwargs):
+        return _common_read(self.signer.validate(*args, **kwargs))
+
+
+class _AtomicMemoryMergeService(ArtifactMergeService):
+    """Persist descriptions and capture evidence atomically across all merge entry points."""
 
     @override
     async def _commit_locked(
@@ -331,16 +339,53 @@ class _AtomicMemoryMergeService(ArtifactMergeService):
                     await projections.capture_evidence(connection, item.plan.scope_id, _atomic_record(record))
         return results
 
+    @override
+    async def prepare_change(self, plan: ArtifactMergePlan) -> PreparedArtifactMerge:
+        # Persist the description with the final normalized body before preparing its projection.
+        if plan.operation in {"change", "merge"}:
+            writes = []
+            for write in plan.writes:
+                draft = write.draft
+                if draft is not None and draft.content.description is None:
+                    content = AtomicMemoryContent.model_validate({
+                        **draft.content.model_dump(mode="json", by_alias=True),
+                        "description": default_description(draft.content.text),
+                    })
+                    draft = draft.model_copy(update={"content": content})
+                writes.append(replace(write, draft=draft))
+            plan = replace(plan, writes=tuple(writes))
+        return await super().prepare_change(plan)
 
-class _AtomicPreviewAdapter:
-    def __init__(self, signer):
-        self.signer = signer
-
-    def encode(self, plan):
-        return self.signer.encode(_atomic_plan(plan))
-
-    def validate(self, *args, **kwargs):
-        return _common_read(self.signer.validate(*args, **kwargs))
+    @override
+    async def commit_window(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        prepared: Sequence[PreparedArtifactMerge],
+        context: Any,
+        *,
+        read_set: Sequence[ArtifactMergeRead] = (),
+        direct_source: SourceRef | None = None,
+        direct_sources: Sequence[SourceRef | None] | None = None,
+        source_read_set: _SourceReadSet | None = None,
+    ) -> tuple[ArtifactMergeMutationResult, ...]:
+        # Prepared content and projection hashes are already fixed. Reject malformed
+        # prepared writes here rather than applying defaults after preparation.
+        for item in prepared:
+            if item.plan.operation in {"change", "merge"}:
+                for write in item.plan.writes:
+                    if write.draft is not None and write.draft.content.description is None:
+                        raise InvalidMemoryCandidateError("canonical", "description is required for new writes")
+        return await super().commit_window(
+            connection,
+            scope_id,
+            prepared,
+            context,
+            read_set=read_set,
+            direct_source=direct_source,
+            direct_sources=direct_sources,
+            source_read_set=source_read_set,
+        )
 
 
 class AtomicMemoryService:
@@ -557,7 +602,7 @@ class AtomicMemoryService:
 
     async def prepare_change(self, plan: AtomicMemoryPlan) -> PreparedAtomicMemory:
         prepared = await self.shared.prepare_change(_common_plan(plan))
-        return PreparedAtomicMemory(plan=plan, projections=prepared.projections)
+        return PreparedAtomicMemory(plan=_atomic_plan(prepared.plan), projections=prepared.projections)
 
     prepare_merge = prepare_change
     prepare_forget = prepare_change

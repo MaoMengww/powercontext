@@ -59,6 +59,7 @@ def test_release_names_preserve_source_upgrade_plan_and_evidence(tmp_path, monke
         "v1_4_1_002",
         "v1_4_1_003",
         "v1_4_1_004",
+        "v1_4_1_005",
         "v1_5_0_001",
         "v1_5_0_002",
     ]
@@ -88,6 +89,7 @@ def test_release_names_preserve_source_upgrade_plan_and_evidence(tmp_path, monke
         "s1401",
         "s1402",
         "v1_4_1_004",
+        "v1_4_1_005",
         "v1_5_0_001",
         "v1_5_0_002",
     }

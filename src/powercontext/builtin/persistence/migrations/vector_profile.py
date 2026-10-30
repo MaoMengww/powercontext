@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +60,7 @@ class ServerVectorProfile:
             "profile": profile.model_dump(mode="json"),
         })
 
-    def sqlite_layouts(self, directory: Path) -> dict[str, list[list[Any]]]:
+    def sqlite_layouts(self, directory: Path) -> dict[str, list[list[Any]]]:  # noqa: C901 -- Render revisions in order.
         core = json.loads((directory / "schemas/sqlite.json").read_text(encoding="utf-8"))
         archive = json.loads((directory / "schemas/sqlite-s1401.json").read_text(encoding="utf-8"))["create"]
         layouts = {
@@ -85,9 +86,24 @@ class ServerVectorProfile:
             layouts["v1_4_1_004"] = layouts["s1402"] + [
                 ["table", "pc_access_owner_recovery", "pc_access_owner_recovery", owner]
             ]
+        if "v1_4_1_005" in manifest["revision_resources"]:
+            layouts["v1_4_1_005"] = copy.deepcopy(layouts["v1_4_1_004"])
+            statement = json.loads((directory / "schemas/sqlite-v1_4_1_005.json").read_text(encoding="utf-8"))[
+                "statement"
+            ]
+            for row in layouts["v1_4_1_005"]:
+                if row[0] == "table" and row[1] == "pc_atomic_memory_current":
+                    # SQLite records ALTER TABLE's exact rewritten definition.
+                    # Render it with SQLite while retaining every vector object.
+                    with closing(sqlite3.connect(":memory:")) as connection:
+                        connection.execute(row[3])
+                        connection.execute(statement)
+                        row[3] = connection.execute(
+                            "SELECT sql FROM sqlite_schema WHERE name='pc_atomic_memory_current'"
+                        ).fetchone()[0]
         if "v1_5_0_001" in manifest["revision_resources"]:
             evidence = json.loads((directory / "schemas/sqlite-v1_5_0_001.json").read_text(encoding="utf-8"))["create"]
-            layouts["v1_5_0_001"] = layouts["v1_4_1_004"] + [
+            layouts["v1_5_0_001"] = layouts["v1_4_1_005"] + [
                 ["table", name, name, statement] for statement in evidence if (name := _created_table(statement))
             ]
         if "v1_5_0_002" in manifest["revision_resources"]:

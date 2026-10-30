@@ -981,8 +981,8 @@ def _load_full_server_baseline(backend: _BackendTarget) -> None:
         ("ALTER TABLE pc_artifact_candidate_versions RENAME TO pc_candidate_versions", "s1300"),
         ("UPDATE pc_artifact_processing_schema SET config_manifest", "s1300"),
         ("CREATE TABLE pc_memory_artifact_archive", "s1400"),
-        ("CREATE TABLE pc_atomic_memory_evidence_schema", "v1_4_1_004"),
-        ("CREATE TABLE pc_source_evidence_bindings", "v1_4_1_004"),
+        ("CREATE TABLE pc_atomic_memory_evidence_schema", "v1_4_1_005"),
+        ("CREATE TABLE pc_source_evidence_bindings", "v1_4_1_005"),
     ],
     ids=(
         "retained-copy",

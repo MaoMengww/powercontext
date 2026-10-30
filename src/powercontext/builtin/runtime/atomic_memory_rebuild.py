@@ -23,7 +23,7 @@ from itertools import groupby
 from time import perf_counter
 
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, exists, func, inspect, select, tuple_
+from sqlalchemy import and_, exists, func, inspect, literal, select, tuple_
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -281,6 +281,7 @@ async def _projection_differences(
         "projection_format": ATOMIC_MEMORY_PROJECTION_FORMAT,
         "kind": content.kind,
         "text": content.text,
+        "description": content.description,
         "searchable_text": analyze_text(atomic_memory_embedding_input(content.kind, content.text)),
         "profile_fingerprint": fingerprint,
         "embedding_input_hash": None
@@ -346,6 +347,15 @@ async def verify_atomic_memory_current(
     )
     profile = index.capabilities.embedding_profile
     fingerprint = None if profile is None else atomic_memory_profile_fingerprint(profile)
+    columns = await connection.run_sync(
+        lambda sync: {column["name"] for column in inspect(sync).get_columns(index.table.name)}
+    )
+    # Intermediate registered revisions predate the nullable description column.
+    # Compare absent metadata as null without selecting a column not yet added.
+    projection_columns = [
+        literal(None).label("description") if column.name == "description" and column.name not in columns else column
+        for column in index.table.c
+    ]
     errors: list[str] = []
     if history_counts.get("evidence_projection_differences"):
         errors.append(
@@ -363,7 +373,7 @@ async def verify_atomic_memory_current(
             row = (
                 (
                     await connection.execute(
-                        select(index.table).where(
+                        select(*projection_columns).where(
                             index.table.c.scope_id == scope_id, index.table.c.artifact_id == artifact_id
                         )
                     )
