@@ -165,7 +165,7 @@ def test_evidence_recovery_resumes_before_final_schema_marker(tmp_path, monkeypa
     configuration = evidence_configuration(None)
     previous = previous_upstream_bundle(tmp_path / "previous-bundle", None)
     assert previous.head == "v1_4_1_004"
-    predecessor = "v1_4_1_006"
+    predecessor = "v1_5_0_001"
     database = tmp_path / "managed.db"
     sqlite = SQLiteMigrationRunner(database, previous, configuration=configuration)
     sqlite.apply(plan_id=sqlite.plan().plan_id, accepted=True, maintenance_confirmed=True)
@@ -188,7 +188,7 @@ def test_evidence_recovery_resumes_before_final_schema_marker(tmp_path, monkeypa
     inventory = copy.deepcopy(
         next(
             state
-            for state in runner.schema._prefixes["v1_5_0_001"]
+            for state in runner.schema._prefixes["v1_5_0_002"]
             if len({marker, history, bindings} & state["tables"].keys()) == created_tables
         )
     )
@@ -204,7 +204,7 @@ def test_evidence_recovery_resumes_before_final_schema_marker(tmp_path, monkeypa
             bundle_checksum=runner.checksum,
             configuration_digest=runner.configuration_digest,
             last_revision=predecessor,
-            pending_revision="v1_5_0_001",
+            pending_revision="v1_5_0_002",
             maintenance_window_id="interrupted-evidence-ddl",
             backup_policy="auto",
             backup_state="not_required",
@@ -223,7 +223,7 @@ def test_evidence_recovery_resumes_before_final_schema_marker(tmp_path, monkeypa
             config.attributes["configuration"] = configuration
             command.upgrade(config, predecessor)
             assert connection.exec_driver_sql("SELECT version_num FROM pc_schema_revision").scalar_one() == predecessor
-            statements = json.loads((runner.bundle.snapshot_directory / "schemas/sqlite-v1_5_0_001.json").read_text())[
+            statements = json.loads((runner.bundle.snapshot_directory / "schemas/sqlite-v1_5_0_002.json").read_text())[
                 "create"
             ]
             for statement in statements[:created_tables]:
@@ -239,7 +239,7 @@ def test_evidence_recovery_resumes_before_final_schema_marker(tmp_path, monkeypa
             before = database.read_bytes(), journal.path.read_bytes()
             plan = runner.plan()
             assert plan.state == "recovery_required" and plan.source_revision == predecessor
-            assert plan.revisions == ("v1_5_0_001", "v1_5_0_002")
+            assert plan.revisions == ("v1_5_0_002", "v1_5_0_003")
             assert (database.read_bytes(), journal.path.read_bytes()) == before
             assert connection.exec_driver_sql("SELECT schema_version FROM pc_atomic_memory_evidence_schema").all() == []
 
@@ -248,7 +248,7 @@ def test_evidence_recovery_resumes_before_final_schema_marker(tmp_path, monkeypa
                 # version advancement, and original durable recovery evidence.
                 config = runner.bundle.config(connection)
                 config.attributes["configuration"] = runner.configuration
-                if target == "v1_5_0_001":
+                if target == "v1_5_0_002":
                     for statement in statements[created_tables:]:
                         connection.exec_driver_sql(statement)
                     command.stamp(config, target)
@@ -264,7 +264,7 @@ def test_evidence_recovery_resumes_before_final_schema_marker(tmp_path, monkeypa
 
             monkeypatch.setattr(runner, "_upgrade", execute_revision)
             result = runner.apply(plan_id=plan.plan_id, accepted=True, maintenance_confirmed=True)
-            assert result.state == "ready" and result.revision == "v1_5_0_002"
+            assert result.state == "ready" and result.revision == "v1_5_0_003"
             assert result.backup_state == "not_required"
             assert runner.verify().state == "ready"
             assert connection.exec_driver_sql("SELECT schema_version FROM pc_atomic_memory_evidence_schema").all() == [
@@ -274,7 +274,7 @@ def test_evidence_recovery_resumes_before_final_schema_marker(tmp_path, monkeypa
             assert completed is not None and completed.state == "complete"
             assert completed.maintenance_window_id == "interrupted-evidence-ddl"
             assert completed.source_revision is None and completed.backup_state == "not_required"
-            assert completed.last_revision == "v1_5_0_002" and completed.pending_revision is None
+            assert completed.last_revision == "v1_5_0_003" and completed.pending_revision is None
             assert completed.release_checksums == runner.checksums
             assert not runner.apply(plan_id=runner.plan().plan_id, accepted=True, maintenance_confirmed=True).changed
 

@@ -30,23 +30,33 @@ from tests.builtin.persistence.test_portable_storage_migration import apply, con
 
 
 @pytest.mark.parametrize("vectors", [False, True])
-def test_registered_owner_recovery_upgrade_preserves_history_and_revision_checksums(tmp_path, vectors):
+@pytest.mark.parametrize("previous_revision", ["s1402", "v1_4_1_004", "v1_4_1_006"])
+def test_registered_owner_recovery_upgrade_preserves_history_and_revision_checksums(
+    tmp_path, vectors, previous_revision
+):
     embedding = EmbeddingProfile(profile_id="owner-vectors", model="fixture", dimension=3) if vectors else None
     current = server_bundle(embedding_profile=embedding)
-    previous = previous_bundle(tmp_path / "previous", embedding, through="s1402")
+    previous = previous_bundle(tmp_path / "previous", embedding, through=previous_revision)
     database = tmp_path / "managed.db"
     old = SQLiteMigrationRunner(database, previous, configuration=configuration(embedding))
-    assert apply(old).revision == "s1402"
+    assert apply(old).revision == previous_revision
     with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute(
             "INSERT INTO pc_scopes (scope_id,title,summary,scope_id_search,title_search,summary_search,version) "
             "VALUES ('original','title','summary','original','title','summary',1)"
         )
+        if previous_revision == "v1_4_1_006":
+            connection.execute("INSERT INTO pc_source_write_plugins VALUES (?, ?)", ("tickets", b"retained definition"))
+        if previous_revision == "v1_4_1_004":
+            connection.execute(
+                "INSERT INTO pc_access_owner_recovery (operation_id,deployment_id,scope_id,completed,payload) "
+                "VALUES ('pending','deployment','original',0,'retained intent')"
+            )
     original_evidence = json.loads(old.evidence_path.read_text(encoding="utf-8"))
     upgraded = SQLiteMigrationRunner(database, current, configuration=configuration(embedding))
     plan = upgraded.plan()
-    appended = current.revisions[current.revisions.index("v1_4_1_004") :]
-    assert plan.source_revision == "s1402" and plan.revisions == appended
+    appended = current.revisions[current.revisions.index(previous_revision) + 1 :]
+    assert plan.source_revision == previous_revision and plan.revisions == appended
     assert apply(upgraded).revision == current.head
     assert upgraded.verify().state == "ready"
     assert not apply(upgraded).changed
@@ -57,7 +67,14 @@ def test_registered_owner_recovery_upgrade_preserves_history_and_revision_checks
         assert connection.execute("SELECT scope_id,title,version FROM pc_scopes").fetchall() == [
             ("original", "title", 1)
         ]
-        assert connection.execute("SELECT COUNT(*) FROM pc_access_owner_recovery").fetchone() == (0,)
+        expected_intents = [("pending", "retained intent", 0)] if previous_revision == "v1_4_1_004" else []
+        assert (
+            connection.execute("SELECT operation_id,payload,completed FROM pc_access_owner_recovery").fetchall()
+            == expected_intents
+        )
+        expected_plugins = [("tickets", b"retained definition")] if previous_revision == "v1_4_1_006" else []
+        assert connection.execute("SELECT * FROM pc_source_write_plugins").fetchall() == expected_plugins
+        assert connection.execute("SELECT COUNT(*) FROM pc_artifact_family_schemas").fetchone() == (0,)
     fresh = SQLiteMigrationRunner(tmp_path / "fresh.db", current, configuration=configuration(embedding))
     apply(fresh)
     assert upgraded.plan().schema_fingerprint == fresh.plan().schema_fingerprint

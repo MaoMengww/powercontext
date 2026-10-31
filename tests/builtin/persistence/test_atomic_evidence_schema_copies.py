@@ -28,8 +28,8 @@ def test_runtime_and_server_evidence_ddl_are_identical() -> None:
     # Runtime readiness compares SQLite `sqlite_master` text exactly, so a drift
     # between these two producer copies fails managed readiness outside CI.
     runtime = json.loads(_RUNTIME.read_text(encoding="utf-8"))
-    sqlite = json.loads((_SERVER / "sqlite-v1_5_0_001.json").read_text(encoding="utf-8"))
-    mysql = json.loads((_SERVER / "mysql-v1_5_0_001.json").read_text(encoding="utf-8"))
+    sqlite = json.loads((_SERVER / "sqlite-v1_5_0_002.json").read_text(encoding="utf-8"))
+    mysql = json.loads((_SERVER / "mysql-v1_5_0_002.json").read_text(encoding="utf-8"))
 
     assert runtime["sqlite"] == sqlite["create"]
-    assert runtime["mysql"] == mysql["revisions"]["v1_5_0_001"]["statements"]
+    assert runtime["mysql"] == mysql["revisions"]["v1_5_0_002"]["statements"]

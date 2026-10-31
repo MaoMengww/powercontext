@@ -12,20 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-"""Register disposable exact-revision Atomic Memory evidence projection."""
-
-import json
-from pathlib import Path
-
-from alembic import op
-
-revision = "v1_5_0_002"
-down_revision = "v1_5_0_001"
-
-
-def upgrade():
-    statements = json.loads((Path(__file__).parents[1] / "schemas/sqlite-v1_5_0_002.json").read_text())
-    connection = op.get_bind()
-    for statement in statements["create"]:
-        connection.exec_driver_sql(statement)
+id: example-incident-report
+version: "1"
+entry: ./plugin.py:create_pipeline
+binding_name: incident-reports
+scope_ids: [team-a]
+max_sources: 20
+processing:
+  interval_seconds: 1
+  max_workers: 1
+  timeout_seconds: 60
+config:
+  title_prefix: 工单快照报告

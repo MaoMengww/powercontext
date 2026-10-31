@@ -45,7 +45,7 @@ class AtomicMemoryEvidenceSchemaError(PersistenceError):
         message = {
             "missing": (
                 "Atomic Memory evidence schema is incomplete; apply the registered evidence revision "
-                "(p0005 for runtime bundles, v1_5_0_001 in the Server chain)"
+                "(p0005 for runtime bundles, v1_5_0_002 in the Server chain)"
             ),
             "version": "Atomic Memory evidence schema version is unsupported",
             "shape": "Atomic Memory evidence table has an incompatible shape",

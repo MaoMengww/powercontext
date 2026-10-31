@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-"""Register the index-owned evidence projection through the shared DDL executor."""
+"""Register the retained evidence tables through the shared DDL executor."""
 
 from alembic import context
 

@@ -561,7 +561,7 @@ def test_oceanbase_server_upgrade_with_separate_code_cache_preserves_history(
     )
     assert runner.plan(backup_policy="manual").source_revision == "s1300"
     result = _apply(runner, policy="manual")
-    assert result.readiness_scope == "server" and result.revision == "v1_5_0_002"
+    assert result.readiness_scope == "server" and result.revision == "v1_5_0_003"
     assert runner.verify().state == "ready"
     prepare_server_storage(settings)
     assert not _apply(runner, policy="manual").changed
@@ -692,7 +692,7 @@ def test_mysql_registered_processing_mode_switch_preserves_revision_and_history(
             ).scalar_one(),
         )
 
-    assert backend.connections().run(inspect_history) == ("v1_5_0_002", "dedicated", b'{"history":"unchanged"}')
+    assert backend.connections().run(inspect_history) == ("v1_5_0_003", "dedicated", b'{"history":"unchanged"}')
 
     (main_path,) = backend.evidence_directory.glob("*/maintenance.json")
     evidence = json.loads(main_path.read_text())
@@ -702,7 +702,7 @@ def test_mysql_registered_processing_mode_switch_preserves_revision_and_history(
     for inspect in (runner.plan, runner.verify, runner.apply):
         with pytest.raises(MigrationError, match="checksum_conflict"):
             inspect()
-    assert backend.connections().run(inspect_history) == ("v1_5_0_002", "dedicated", b'{"history":"unchanged"}')
+    assert backend.connections().run(inspect_history) == ("v1_5_0_003", "dedicated", b'{"history":"unchanged"}')
     assert {
         path: path.read_bytes() for path in backend.evidence_directory.rglob("maintenance.json")
     } == original_evidence
@@ -769,7 +769,7 @@ def test_mysql_atomic_compatibility_command_uses_shared_server_upgrade(
             ).scalar_one(),
         )
 
-    assert backend.connections().run(inspect_history) == ("v1_5_0_002", b'{"history":"unchanged"}')
+    assert backend.connections().run(inspect_history) == ("v1_5_0_003", b'{"history":"unchanged"}')
 
 
 def test_mysql_registered_projection_repair_preserves_authority_and_revision(backend: _BackendTarget) -> None:
@@ -837,7 +837,7 @@ def test_mysql_registered_projection_repair_preserves_authority_and_revision(bac
             ).scalar_one(),
         )
 
-    assert backend.connections().run(inspect_content) == ("v1_5_0_002", content, "Preserve immutable nebula evidence.")
+    assert backend.connections().run(inspect_content) == ("v1_5_0_003", content, "Preserve immutable nebula evidence.")
 
 
 @pytest.mark.parametrize("origin", ("empty", "released"))
@@ -981,8 +981,8 @@ def _load_full_server_baseline(backend: _BackendTarget) -> None:
         ("ALTER TABLE pc_artifact_candidate_versions RENAME TO pc_candidate_versions", "s1300"),
         ("UPDATE pc_artifact_processing_schema SET config_manifest", "s1300"),
         ("CREATE TABLE pc_memory_artifact_archive", "s1400"),
-        ("CREATE TABLE pc_atomic_memory_evidence_schema", "v1_4_1_005"),
-        ("CREATE TABLE pc_source_evidence_bindings", "v1_4_1_005"),
+        ("CREATE TABLE pc_atomic_memory_evidence_schema", "v1_5_0_001"),
+        ("CREATE TABLE pc_source_evidence_bindings", "v1_5_0_001"),
     ],
     ids=(
         "retained-copy",
@@ -1001,7 +1001,7 @@ def test_mysql_full_server_interruption_preserves_history_and_original_maintenan
     _load_full_server_baseline(backend)
     runner = _full_server_runner(backend)
     original = runner.plan(backup_policy="manual")
-    assert original.source_revision == "s1300" and original.target_revision == "v1_5_0_002"
+    assert original.source_revision == "s1300" and original.target_revision == "v1_5_0_003"
     _interrupt_after_ddl(runner, interruption)
     journals = list(backend.evidence_directory.rglob("maintenance.json"))
     assert len(journals) == 1
@@ -1023,7 +1023,7 @@ def test_mysql_full_server_interruption_preserves_history_and_original_maintenan
 
     result = _apply(resumed, policy="manual")
 
-    assert result.readiness_scope == "server" and result.revision == "v1_5_0_002"
+    assert result.readiness_scope == "server" and result.revision == "v1_5_0_003"
     assert result.backup_state == "user_confirmed"
     assert result.backup_ref == interrupted["manual_ref"]
     assert resumed.verify().state == "ready"
@@ -1103,7 +1103,7 @@ def test_oceanbase_full_server_client_exit_requires_acknowledgement_and_preserve
     # interruption. An arbitrary remote failure cannot be acknowledged blindly.
     resumed = _full_server_runner(backend, acknowledge_previous_run=token)
     result = _apply(resumed, policy="manual")
-    assert result.state == "ready" and result.readiness_scope == "server" and result.revision == "v1_5_0_002"
+    assert result.state == "ready" and result.readiness_scope == "server" and result.revision == "v1_5_0_003"
     assert result.backup_state == "user_confirmed" and result.backup_ref == interrupted["manual_ref"]
     assert resumed.verify().state == "ready"
     completed = json.loads(journals[0].read_text(encoding="utf-8"))

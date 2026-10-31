@@ -12,19 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Register retained Source evidence and exact Atomic Memory evidence snapshots."""
-
-import json
-from pathlib import Path
-
-from alembic import op
-
-revision = "v1_5_0_001"
-down_revision = "v1_4_1_006"
-
-
-def upgrade():
-    statements = json.loads((Path(__file__).parents[1] / "schemas/sqlite-v1_5_0_001.json").read_text())
-    connection = op.get_bind()
-    for statement in statements["create"]:
-        connection.exec_driver_sql(statement)
+id: example-ticket-summary
+version: "1"
+entry: ./plugin.py:create_pipeline
+binding_name: ticket-summaries
+scope_ids: [team-b]
+max_sources: 4
+processing:
+  interval_seconds: 5
+  max_workers: 2
+  timeout_seconds: 90
+config:
+  language: 简体中文

@@ -32,8 +32,8 @@ from powercontext.builtin.persistence.migrations.sqlite import SQLiteMigrationRu
 from powercontext.builtin.runtime.config import BuiltinConfig
 from powercontext.builtin.runtime.processing_registry import canonical_processing_manifest
 
-EVIDENCE_REVISION = "v1_5_0_001"
-PROJECTION_REVISION = "v1_5_0_002"
+EVIDENCE_REVISION = "v1_5_0_002"
+PROJECTION_REVISION = "v1_5_0_003"
 EVIDENCE_TABLES = {
     "pc_atomic_memory_evidence_schema",
     "pc_atomic_memory_evidence_history",
@@ -82,6 +82,8 @@ def previous_upstream_bundle(directory, embedding):
     retained_resources = {resource for resources in manifest["revision_resources"].values() for resource in resources}
     for step in manifest["domain_steps"]:
         retained_resources.update((step["module"], *step.get("resources", ())))
+    # The bundle substitutes its vector domain module and profile at load time.
+    retained_resources.update({"server_vector_domain.py", "profiles/vector.json"})
     for name in appended:
         revision = current.script.get_revision(name)
         removed_resources.add(Path(revision.path).relative_to(current.snapshot_directory).as_posix())
@@ -158,8 +160,12 @@ def test_evidence_upgrade_accepts_upstream_history_and_preserves_data(tmp_path, 
     assert plan.state == "migration_required"
     assert plan.source_revision == "v1_4_1_004"
     assert plan.target_revision == PROJECTION_REVISION
-    assert plan.revisions == ("v1_4_1_005", "v1_4_1_006", EVIDENCE_REVISION, PROJECTION_REVISION)
-    assert plan.domain_steps == ("atomic_memory_evidence", "atomic_memory_evidence_projection")
+    assert plan.revisions == ("v1_4_1_005", "v1_4_1_006", "v1_5_0_001", EVIDENCE_REVISION, PROJECTION_REVISION)
+    assert plan.domain_steps == (
+        "artifact_storage",
+        "atomic_memory_evidence",
+        "atomic_memory_evidence_projection",
+    )
     assert upgraded.evidence_path.read_bytes() == old_evidence_bytes
     result = upgraded.apply(plan_id=plan.plan_id, accepted=True, maintenance_confirmed=True)
     assert result.changed
@@ -177,6 +183,7 @@ def test_evidence_upgrade_accepts_upstream_history_and_preserves_data(tmp_path, 
         *expected,
         "v1_4_1_005",
         "v1_4_1_006",
+        "v1_5_0_001",
         EVIDENCE_REVISION,
         PROJECTION_REVISION,
     }

@@ -60,7 +60,7 @@ class ServerVectorProfile:
             "profile": profile.model_dump(mode="json"),
         })
 
-    def sqlite_layouts(self, directory: Path) -> dict[str, list[list[Any]]]:  # noqa: C901 -- Render revisions in order.
+    def sqlite_layouts(self, directory: Path) -> dict[str, list[list[Any]]]:  # noqa: C901 - Compose the registered revision layouts in chain order.
         core = json.loads((directory / "schemas/sqlite.json").read_text(encoding="utf-8"))
         archive = json.loads((directory / "schemas/sqlite-s1401.json").read_text(encoding="utf-8"))["create"]
         layouts = {
@@ -106,14 +106,23 @@ class ServerVectorProfile:
             layouts["v1_4_1_006"] = layouts["v1_4_1_005"] + [
                 ["table", "pc_source_write_plugins", "pc_source_write_plugins", plugin]
             ]
-        if "v1_5_0_001" in manifest["revision_resources"]:
-            evidence = json.loads((directory / "schemas/sqlite-v1_5_0_001.json").read_text(encoding="utf-8"))["create"]
-            layouts["v1_5_0_001"] = layouts["v1_4_1_006"] + [
-                ["table", name, name, statement] for statement in evidence if (name := _created_table(statement))
-            ]
+        artifact_revision = "v1_5_0_001"
+        if artifact_revision in manifest["revision_resources"]:
+            artifact = json.loads((directory / f"schemas/sqlite-{artifact_revision}.json").read_text())["layout"]
+            previous = {(row[0], row[1]): row for row in layouts["v1_4_1_006"]}
+            for row in artifact:
+                key = (row[0], row[1])
+                if key not in previous or row[1] == "pc_artifact_processing_binding_states":
+                    previous[key] = row
+            layouts[artifact_revision] = list(previous.values())
         if "v1_5_0_002" in manifest["revision_resources"]:
             evidence = json.loads((directory / "schemas/sqlite-v1_5_0_002.json").read_text(encoding="utf-8"))["create"]
             layouts["v1_5_0_002"] = layouts["v1_5_0_001"] + [
+                ["table", name, name, statement] for statement in evidence if (name := _created_table(statement))
+            ]
+        if "v1_5_0_003" in manifest["revision_resources"]:
+            evidence = json.loads((directory / "schemas/sqlite-v1_5_0_003.json").read_text(encoding="utf-8"))["create"]
+            layouts["v1_5_0_003"] = layouts["v1_5_0_002"] + [
                 ["table", name, name, statement] for statement in evidence if (name := _created_table(statement))
             ]
         for entries in layouts.values():

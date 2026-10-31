@@ -35,7 +35,9 @@ def _created_tables(path):
     """Tables a frozen SQLite schema resource registers, in its exact bytes."""
 
     resource = json.loads(path.read_text(encoding="utf-8"))
-    payload = resource["create"] if "create" in resource else resource["statement"]
+    if "layout" in resource:
+        return {row[1] for row in resource["layout"] if row[0] == "table"}
+    payload = resource["create"] if "create" in resource else resource.get("statements", resource["statement"])
     statements = [payload] if isinstance(payload, str) else payload
     return {
         match[1]
@@ -116,8 +118,16 @@ def test_registered_s1401_upgrade_preserves_completed_evidence_and_matches_fresh
     upgraded = SQLiteMigrationRunner(database, bundle, configuration=config)
     plan = upgraded.plan()
     assert plan.source_revision == "s1401"
-    assert plan.revisions == ("s1402", "v1_4_1_004", "v1_4_1_005", "v1_4_1_006", "v1_5_0_001", "v1_5_0_002")
-    assert apply(upgraded).revision == "v1_5_0_002"
+    assert plan.revisions == (
+        "s1402",
+        "v1_4_1_004",
+        "v1_4_1_005",
+        "v1_4_1_006",
+        "v1_5_0_001",
+        "v1_5_0_002",
+        "v1_5_0_003",
+    )
+    assert apply(upgraded).revision == "v1_5_0_003"
     assert upgraded.verify().state == "ready"
     assert not apply(upgraded).changed
     fresh = SQLiteMigrationRunner(tmp_path / "fresh.db", bundle, configuration=config)
@@ -176,11 +186,11 @@ def test_source_write_plugin_upgrade_preserves_data_and_registration(tmp_path, v
     bundle = server_bundle(embedding_profile=embedding)
     upgraded = SQLiteMigrationRunner(database, bundle, configuration=config)
     assert upgraded.plan().revisions == (
-        ("v1_4_1_005", "v1_4_1_006", "v1_5_0_001", "v1_5_0_002")
+        ("v1_4_1_005", "v1_4_1_006", "v1_5_0_001", "v1_5_0_002", "v1_5_0_003")
         if include_owner
-        else ("v1_4_1_004", "v1_4_1_005", "v1_4_1_006", "v1_5_0_001", "v1_5_0_002")
+        else ("v1_4_1_004", "v1_4_1_005", "v1_4_1_006", "v1_5_0_001", "v1_5_0_002", "v1_5_0_003")
     )
-    assert apply(upgraded).revision == "v1_5_0_002"
+    assert apply(upgraded).revision == "v1_5_0_003"
     definition = b'{"configuration":{"id":"tickets","entry":"tickets"}}'
     with closing(sqlite3.connect(database)) as connection, connection:
         assert connection.execute("SELECT title FROM pc_scopes").fetchall() == [("preserved",)]
