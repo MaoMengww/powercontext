@@ -125,13 +125,14 @@ def test_description_upgrade_preserves_registered_owner_recovery_and_evidence(tm
     manifest["mysql_state_layouts"] = [
         resource for resource in manifest["mysql_state_layouts"] if resource not in removed_resources
     ]
-    evidence_tables = {
+    appended_tables = {
         "pc_atomic_memory_evidence_schema",
         "pc_atomic_memory_evidence_history",
         "pc_atomic_memory_evidence",
         "pc_source_evidence_bindings",
+        "pc_source_write_plugins",
     }
-    manifest["affected_objects"] = [name for name in manifest["affected_objects"] if name not in evidence_tables]
+    manifest["affected_objects"] = [name for name in manifest["affected_objects"] if name not in appended_tables]
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     previous = MigrationBundle(directory, embedding_profile=profile)
     assert previous.head == "v1_4_1_004"
@@ -154,7 +155,7 @@ def test_description_upgrade_preserves_registered_owner_recovery_and_evidence(tm
     plan = upgraded.plan()
     assert plan.source_revision == "v1_4_1_004"
     assert plan.target_revision == "v1_5_0_002"
-    assert plan.revisions == ("v1_4_1_005", "v1_5_0_001", "v1_5_0_002")
+    assert plan.revisions == ("v1_4_1_005", "v1_4_1_006", "v1_5_0_001", "v1_5_0_002")
     assert plan.domain_steps == ("atomic_memory_evidence", "atomic_memory_evidence_projection")
     assert upgraded.evidence_path.read_bytes() == original_evidence_bytes
     assert upgraded.apply(plan_id=plan.plan_id, accepted=True, maintenance_confirmed=True).revision == "v1_5_0_002"

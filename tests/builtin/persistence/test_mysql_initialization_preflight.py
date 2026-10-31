@@ -165,7 +165,7 @@ def test_evidence_recovery_resumes_before_final_schema_marker(tmp_path, monkeypa
     configuration = evidence_configuration(None)
     previous = previous_upstream_bundle(tmp_path / "previous-bundle", None)
     assert previous.head == "v1_4_1_004"
-    predecessor = "v1_4_1_005"
+    predecessor = "v1_4_1_006"
     database = tmp_path / "managed.db"
     sqlite = SQLiteMigrationRunner(database, previous, configuration=configuration)
     sqlite.apply(plan_id=sqlite.plan().plan_id, accepted=True, maintenance_confirmed=True)
@@ -218,7 +218,7 @@ def test_evidence_recovery_resumes_before_final_schema_marker(tmp_path, monkeypa
     try:
         with engine.connect() as connection:
             # The interrupted evidence DDL starts only after the released
-            # description migration, including its real version advancement.
+            # description and plugin migrations, including their real version advancement.
             config = runner.bundle.config(connection)
             config.attributes["configuration"] = configuration
             command.upgrade(config, predecessor)

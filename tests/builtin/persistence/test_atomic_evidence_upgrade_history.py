@@ -96,7 +96,11 @@ def previous_upstream_bundle(directory, embedding):
     ]
     for revision in appended:
         manifest.get("mysql_wrappers", {}).pop(revision, None)
-    manifest["affected_objects"] = [name for name in manifest["affected_objects"] if name not in EVIDENCE_TABLES]
+    manifest["affected_objects"] = [
+        name
+        for name in manifest["affected_objects"]
+        if name not in EVIDENCE_TABLES and name != "pc_source_write_plugins"
+    ]
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return MigrationBundle(directory, embedding_profile=embedding)
 
@@ -154,7 +158,7 @@ def test_evidence_upgrade_accepts_upstream_history_and_preserves_data(tmp_path, 
     assert plan.state == "migration_required"
     assert plan.source_revision == "v1_4_1_004"
     assert plan.target_revision == PROJECTION_REVISION
-    assert plan.revisions == ("v1_4_1_005", EVIDENCE_REVISION, PROJECTION_REVISION)
+    assert plan.revisions == ("v1_4_1_005", "v1_4_1_006", EVIDENCE_REVISION, PROJECTION_REVISION)
     assert plan.domain_steps == ("atomic_memory_evidence", "atomic_memory_evidence_projection")
     assert upgraded.evidence_path.read_bytes() == old_evidence_bytes
     result = upgraded.apply(plan_id=plan.plan_id, accepted=True, maintenance_confirmed=True)
@@ -172,6 +176,7 @@ def test_evidence_upgrade_accepts_upstream_history_and_preserves_data(tmp_path, 
     assert set(completed_evidence["release_checksums"]) == {
         *expected,
         "v1_4_1_005",
+        "v1_4_1_006",
         EVIDENCE_REVISION,
         PROJECTION_REVISION,
     }

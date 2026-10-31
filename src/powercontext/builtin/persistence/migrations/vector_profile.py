@@ -101,9 +101,14 @@ class ServerVectorProfile:
                         row[3] = connection.execute(
                             "SELECT sql FROM sqlite_schema WHERE name='pc_atomic_memory_current'"
                         ).fetchone()[0]
+        if "v1_4_1_006" in manifest["revision_resources"]:
+            plugin = json.loads((directory / "schemas/sqlite-v1_4_1_006.json").read_text(encoding="utf-8"))["create"]
+            layouts["v1_4_1_006"] = layouts["v1_4_1_005"] + [
+                ["table", "pc_source_write_plugins", "pc_source_write_plugins", plugin]
+            ]
         if "v1_5_0_001" in manifest["revision_resources"]:
             evidence = json.loads((directory / "schemas/sqlite-v1_5_0_001.json").read_text(encoding="utf-8"))["create"]
-            layouts["v1_5_0_001"] = layouts["v1_4_1_005"] + [
+            layouts["v1_5_0_001"] = layouts["v1_4_1_006"] + [
                 ["table", name, name, statement] for statement in evidence if (name := _created_table(statement))
             ]
         if "v1_5_0_002" in manifest["revision_resources"]:

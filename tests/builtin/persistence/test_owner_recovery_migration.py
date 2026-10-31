@@ -15,63 +15,25 @@
 """Append owner recovery storage without changing historical migration evidence."""
 
 import json
-import shutil
 import sqlite3
 from contextlib import closing
-from pathlib import Path
 
 import pytest
 
 from powercontext.builtin.artifacts.memory import EmbeddingProfile
-from powercontext.builtin.persistence.migrations.bundle import MigrationBundle
 from powercontext.builtin.persistence.migrations.deployment import server_bundle
 from powercontext.builtin.persistence.migrations.models import MigrationError
 from powercontext.builtin.persistence.migrations.mysql_schema import MySQLSchema
 from powercontext.builtin.persistence.migrations.sqlite import SQLiteMigrationRunner
 from tests.builtin.persistence.test_mysql_migration_schema import _inventory, _ReflectedDatabase
-from tests.builtin.persistence.test_portable_storage_migration import apply, configuration
+from tests.builtin.persistence.test_portable_storage_migration import apply, configuration, previous_bundle
 
 
 @pytest.mark.parametrize("vectors", [False, True])
 def test_registered_owner_recovery_upgrade_preserves_history_and_revision_checksums(tmp_path, vectors):
     embedding = EmbeddingProfile(profile_id="owner-vectors", model="fixture", dimension=3) if vectors else None
     current = server_bundle(embedding_profile=embedding)
-    directory = tmp_path / "previous"
-    shutil.copytree(current.directory, directory, ignore=shutil.ignore_patterns("__pycache__"))
-    manifest_path = directory / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    appended = current.revisions[current.revisions.index("v1_4_1_004") :]
-    removed_resources = {resource for revision in appended for resource in manifest["revision_resources"].pop(revision)}
-    removed_steps = [step for step in manifest["domain_steps"] if step["revision"] in appended]
-    manifest["domain_steps"] = [step for step in manifest["domain_steps"] if step["revision"] not in appended]
-    for step in removed_steps:
-        removed_resources.update((step["module"], *step.get("resources", ())))
-    retained_resources = {resource for resources in manifest["revision_resources"].values() for resource in resources}
-    for step in manifest["domain_steps"]:
-        retained_resources.update((step["module"], *step.get("resources", ())))
-    for name in appended:
-        revision = current.script.get_revision(name)
-        removed_resources.add(Path(revision.path).relative_to(current.snapshot_directory).as_posix())
-        removed_resources.add(f"mysql/versions/{name}.py")
-    for resource in removed_resources - retained_resources:
-        (directory / resource).unlink()
-    for revision in appended:
-        del manifest["sqlite_fingerprints"][revision]
-        del manifest["domain_readiness"][revision]
-        manifest.get("mysql_wrappers", {}).pop(revision, None)
-    manifest["mysql_state_layouts"] = [
-        resource for resource in manifest["mysql_state_layouts"] if resource not in removed_resources
-    ]
-    appended_tables = {
-        "pc_access_owner_recovery",
-        "pc_atomic_memory_evidence_schema",
-        "pc_atomic_memory_evidence_history",
-        "pc_atomic_memory_evidence",
-        "pc_source_evidence_bindings",
-    }
-    manifest["affected_objects"] = [name for name in manifest["affected_objects"] if name not in appended_tables]
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    previous = MigrationBundle(directory, embedding_profile=embedding)
+    previous = previous_bundle(tmp_path / "previous", embedding, through="s1402")
     database = tmp_path / "managed.db"
     old = SQLiteMigrationRunner(database, previous, configuration=configuration(embedding))
     assert apply(old).revision == "s1402"
@@ -83,6 +45,7 @@ def test_registered_owner_recovery_upgrade_preserves_history_and_revision_checks
     original_evidence = json.loads(old.evidence_path.read_text(encoding="utf-8"))
     upgraded = SQLiteMigrationRunner(database, current, configuration=configuration(embedding))
     plan = upgraded.plan()
+    appended = current.revisions[current.revisions.index("v1_4_1_004") :]
     assert plan.source_revision == "s1402" and plan.revisions == appended
     assert apply(upgraded).revision == current.head
     assert upgraded.verify().state == "ready"
